@@ -58,6 +58,7 @@ import com.google.ai.edge.gallery.ui.common.chat.ChatSide
 import com.google.ai.edge.gallery.ui.modelmanager.ModelManagerViewModel
 import com.google.ai.edge.gallery.ui.theme.customColors
 import com.google.ai.edge.litertlm.ToolProvider
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.launch
 
@@ -112,51 +113,53 @@ fun TinyGardenScreen(
   }
 }
 
-// Pure Compose Canvas JRPG renderer — replaces KorGE AndroidView
+// ── Canvas JRPG renderer — no KorGE, pure Compose ───────────────────────────
 @Composable
-fun JrpgBattleCanvas(jrpgState: JrpgState, modifier: Modifier = Modifier) {
-  val heroOffsetX by animateFloatAsState(
-    targetValue = if (jrpgState.heroAttacking) 80f else 0f,
-    animationSpec = tween(150), label = "heroX"
-  )
-  val goblinOffsetX by animateFloatAsState(
-    targetValue = if (jrpgState.goblinAttacking) -80f else 0f,
-    animationSpec = tween(150), label = "goblinX"
-  )
-  val magicAlpha by animateFloatAsState(
-    targetValue = if (jrpgState.heroMagic) 1f else 0f,
-    animationSpec = tween(300), label = "magic"
-  )
+fun JrpgBattleCanvas(
+  jrpgState: JrpgState,
+  heroAttacking: Boolean,
+  goblinAttacking: Boolean,
+  magicFx: Boolean,
+  modifier: Modifier = Modifier,
+) {
+  val heroOffsetX by animateFloatAsState(if (heroAttacking) 80f else 0f, tween(150), label = "hx")
+  val goblinOffsetX by animateFloatAsState(if (goblinAttacking) -80f else 0f, tween(150), label = "gx")
+  val magicAlpha by animateFloatAsState(if (magicFx) 1f else 0f, tween(300), label = "mx")
+
   Canvas(modifier = modifier) {
     val w = size.width; val h = size.height
     drawRect(brush = Brush.verticalGradient(listOf(Color(0xFF0D0D2B), Color(0xFF1A1A3A)), 0f, h))
-    drawRect(color = Color(0xFF2A2A5A), topLeft = Offset(0f, h * 0.72f), size = Size(w, h * 0.28f))
-    // Goblin
-    val goblinHp = (jrpgState.goblinHp.toFloat() / 50f).coerceIn(0f, 1f)
+    drawRect(Color(0xFF2A2A5A), Offset(0f, h * 0.72f), Size(w, h * 0.28f))
+
+    // Enemy
+    val enemyHpRatio = (jrpgState.enemyHp.toFloat() / jrpgState.enemyMaxHp.toFloat()).coerceIn(0f, 1f)
     translate(w * 0.68f + goblinOffsetX, h * 0.25f) {
       drawRect(Color(0xFF228B22), Offset(-30f, 0f), Size(60f, 90f))
       drawCircle(Color(0xFF32CD32), 28f, Offset(0f, -28f))
       drawCircle(Color.Red, 5f, Offset(-10f, -30f))
       drawCircle(Color.Red, 5f, Offset(10f, -30f))
       drawRect(Color(0xFF333333), Offset(-35f, -70f), Size(70f, 10f))
-      drawRect(Color(0xFFCC2222), Offset(-35f, -70f), Size(70f * goblinHp, 10f))
+      drawRect(Color(0xFFCC2222), Offset(-35f, -70f), Size(70f * enemyHpRatio, 10f))
     }
-    // Hero
-    val heroHp = (jrpgState.heroHp.toFloat() / 100f).coerceIn(0f, 1f)
-    val heroColor = if (magicAlpha > 0.5f) Color(0xFFAA44FF) else Color(0xFF2244CC)
+
+    // Player
+    val playerHpRatio = (jrpgState.playerHp.toFloat() / jrpgState.playerMaxHp.toFloat()).coerceIn(0f, 1f)
+    val heroBodyColor = if (magicAlpha > 0.5f) Color(0xFFAA44FF) else Color(0xFF2244CC)
     translate(w * 0.22f + heroOffsetX, h * 0.3f) {
       drawRect(Color(0xFF0A0A66), Offset(-25f, 20f), Size(50f, 80f))
-      drawRect(heroColor, Offset(-20f, 0f), Size(40f, 75f))
+      drawRect(heroBodyColor, Offset(-20f, 0f), Size(40f, 75f))
       drawCircle(Color(0xFFFFDDAA), 22f, Offset(0f, -22f))
       drawRect(Color(0xFF333333), Offset(-40f, -65f), Size(80f, 10f))
-      drawRect(Color(0xFF22AACC), Offset(-40f, -65f), Size(80f * heroHp, 10f))
+      drawRect(Color(0xFF22AACC), Offset(-40f, -65f), Size(80f * playerHpRatio, 10f))
     }
+
     if (magicAlpha > 0.1f) {
-      drawCircle(Color(0x55FFFF00).copy(alpha = 0.33f * magicAlpha), 60f * magicAlpha, Offset(w * 0.68f, h * 0.42f))
+      drawCircle(Color(0x55FFFF00).copy(alpha = 0.4f * magicAlpha), 60f * magicAlpha, Offset(w * 0.68f, h * 0.42f))
     }
   }
 }
 
+// ── Main UI ──────────────────────────────────────────────────────────────────
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainUi(
@@ -182,6 +185,12 @@ fun MainUi(
   var errorDialogContent by remember { mutableStateOf("") }
   val snackbarHostState = remember { SnackbarHostState() }
   val context = LocalContext.current
+
+  // Local animation state — no ViewModel needed
+  var heroAttacking by remember { mutableStateOf(false) }
+  var goblinAttacking by remember { mutableStateOf(false) }
+  var magicFx by remember { mutableStateOf(false) }
+
   val taskColor = getTaskBgGradientColors(task = task)[1]
   val curDownloadStatus = modelManagerUiState.modelDownloadStatus[model.name]?.status
 
@@ -191,14 +200,21 @@ fun MainUi(
   )
   BackHandler(enabled = showConversationHistoryPanel) { showConversationHistoryPanel = false }
   LaunchedEffect(showConversationHistoryPanel) { setTopBarVisible(!showConversationHistoryPanel) }
+
   LaunchedEffect(Unit) {
     commandFlow.collect { command ->
       val actionName = command.action.name
       val battleText = "Player used ${command.value.ifEmpty { actionName }} on ${command.target} for ${command.damage} damage!"
       viewModel.updateBattleLog(battleText)
       viewModel.applyDamage(command.target, command.damage)
-      viewModel.triggerAnimation(command.action)
       viewModel.addMessage(message = ChatMessageText(content = battleText, side = ChatSide.AGENT))
+      // Trigger animations locally
+      when (command.action) {
+        JrpgAction.ATTACK -> { heroAttacking = true; delay(300); heroAttacking = false }
+        JrpgAction.MAGIC  -> { magicFx = true; delay(500); magicFx = false }
+        JrpgAction.ENEMY_ATTACK -> { goblinAttacking = true; delay(300); goblinAttacking = false }
+        else -> {}
+      }
     }
   }
 
@@ -236,6 +252,9 @@ fun MainUi(
         Column(modifier = Modifier.weight(1f).fillMaxWidth().padding(16.dp)) {
           JrpgBattleCanvas(
             jrpgState = uiState.jrpgState,
+            heroAttacking = heroAttacking,
+            goblinAttacking = goblinAttacking,
+            magicFx = magicFx,
             modifier = Modifier.fillMaxWidth().weight(1f).border(4.dp, Color.White, RoundedCornerShape(8.dp))
           )
           Spacer(modifier = Modifier.height(16.dp))
