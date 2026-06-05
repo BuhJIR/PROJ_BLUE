@@ -62,10 +62,6 @@ import com.google.ai.edge.gallery.ui.common.chat.ChatSide
 import com.google.ai.edge.gallery.ui.modelmanager.ModelManagerViewModel
 import com.google.ai.edge.gallery.ui.theme.customColors
 import com.google.ai.edge.litertlm.ToolProvider
-import korlibs.korge.android.KorgeAndroidView
-import korlibs.korge.Korge
-import korlibs.korge.scene.Module
-import korlibs.inject.AsyncInjector
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.launch
 
@@ -253,16 +249,16 @@ fun MainUi(
                 com.google.ai.edge.gallery.customtasks.tinygarden.korge.GameContext.commandFlow = commandFlow
 
                 // Создаем Korge Android View (запускает OpenGL контекст)
-                val korgeView = KorgeAndroidView(ctx)
+                val korgeView = com.soywiz.korge.android.KorgeAndroidView(ctx)
                 
                 // Инициализируем игру
                 kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Main).launch {
-                    Korge(
+                    com.soywiz.korge.Korge(
                         view = korgeView,
-                        config = Korge.Config(
-                            module = object : Module() {
+                        config = com.soywiz.korge.Korge.Config(
+                            module = object : com.soywiz.korge.scene.Module() {
                                 override val mainScene = com.google.ai.edge.gallery.customtasks.tinygarden.korge.JrpgBattleScene::class
-                                override suspend fun asyncInjectInjector(injector: AsyncInjector) {
+                                override suspend fun asyncInjectInjector(injector: com.soywiz.inject.AsyncInjector) {
                                     injector.mapPrototype { com.google.ai.edge.gallery.customtasks.tinygarden.korge.JrpgBattleScene() }
                                 }
                             }
