@@ -16,6 +16,7 @@
 package com.google.ai.edge.gallery.customtasks.tinygarden
 
 import android.Manifest
+import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Bundle
 import androidx.activity.compose.BackHandler
@@ -243,7 +244,7 @@ fun MainUi(
           // --- ИНТЕГРАЦИЯ KorGE ---
           // Здесь мы запускаем движок поверх Android Jetpack Compose
           androidx.compose.ui.viewinterop.AndroidView(
-            factory = { ctx ->
+            factory = { ctx: Context ->
                 // Инжектим поток команд от ИИ в движок
                 com.google.ai.edge.gallery.customtasks.tinygarden.korge.GameContext.commandFlow = commandFlow
 
