@@ -84,7 +84,7 @@ class JrpgBattleScene : Scene() {
         }
     }
 
-    private suspend fun showFloatingDamage(damage: Int, targetContainer: korlibs.korge.view.Container) {
+    private suspend fun showFloatingDamage(damage: Int, targetContainer: Container) {
         val dmgText = targetContainer.text("-$damage", textSize = 40f, color = Colors.RED).xy(-20, -50)
         dmgText.tween(dmgText::y[dmgText.y - 100], dmgText::alpha[0.0], time = 1.seconds)
         dmgText.removeFromParent()
