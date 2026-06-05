@@ -105,8 +105,6 @@ dependencies {
   implementation(libs.hilt.android)
   implementation(libs.hilt.navigation.compose)
   
-  // KorGE Engine
-  implementation("com.soywiz.korlibs.korge2:korge:3.4.0")
   
   implementation(libs.play.services.oss.licenses)
   implementation(platform(libs.firebase.bom))
