@@ -224,13 +224,49 @@ fun MainUi(
             modifier = Modifier.fillMaxWidth().weight(1f).border(4.dp, Color.White, RoundedCornerShape(8.dp))
           )
           Spacer(modifier = Modifier.height(16.dp))
-          Box(
+          // Paginator logic
+          var logOffset by remember { mutableIntStateOf(0) }
+          val logs = uiState.gameState.battleLog
+          // Auto-scroll to bottom when new logs arrive, unless user manually scrolled
+          LaunchedEffect(logs.size) { logOffset = 0 }
+          
+          val maxOffset = maxOf(0, logs.size - 1)
+          val currentLogIndex = (logs.size - 1 - logOffset).coerceIn(0, maxOffset)
+          val displayedLog = if (logs.isNotEmpty()) logs[currentLogIndex] else "The world is quiet..."
+
+          Row(
             modifier = Modifier.fillMaxWidth()
               .border(4.dp, Color.White, RoundedCornerShape(8.dp))
               .background(Brush.verticalGradient(listOf(Color(0xFF0000AA), Color(0xFF000033))), RoundedCornerShape(8.dp))
-              .padding(16.dp)
+              .padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
           ) {
-            Text(uiState.gameState.battleLog.takeLast(3).joinToString("\n"), color = Color.White, fontSize = 18.sp, lineHeight = 24.sp)
+            Text(
+                text = displayedLog, 
+                color = Color.White, 
+                fontSize = 18.sp, 
+                lineHeight = 24.sp,
+                modifier = Modifier.weight(1f)
+            )
+            Column(
+                modifier = Modifier.padding(start = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                // "Up" goes back in history (increases offset)
+                IconButton(
+                    onClick = { if (logOffset < maxOffset) logOffset++ },
+                    modifier = Modifier.size(32.dp).background(Color(0x44FFFFFF), RoundedCornerShape(4.dp))
+                ) {
+                    Text("▲", color = if (logOffset < maxOffset) Color.White else Color.Gray, fontSize = 16.sp)
+                }
+                // "Down" goes forward in history (decreases offset)
+                IconButton(
+                    onClick = { if (logOffset > 0) logOffset-- },
+                    modifier = Modifier.size(32.dp).background(Color(0x44FFFFFF), RoundedCornerShape(4.dp))
+                ) {
+                    Text("▼", color = if (logOffset > 0) Color.White else Color.Gray, fontSize = 16.sp)
+                }
+            }
           }
         }
         Row(
