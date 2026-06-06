@@ -1,12 +1,3 @@
-/*
- * Copyright 2025 Google LLC
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- */
 package com.google.ai.edge.gallery.customtasks.tinygarden
 
 import android.Manifest
@@ -17,8 +8,6 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -52,13 +41,11 @@ import com.google.ai.edge.gallery.ui.common.getTaskBgGradientColors
 import com.google.ai.edge.gallery.ui.common.textandvoiceinput.TextAndVoiceInput
 import com.google.ai.edge.gallery.ui.common.textandvoiceinput.VoiceRecognizerOverlay
 import com.google.ai.edge.gallery.ui.common.textandvoiceinput.HoldToDictateViewModel
-import com.google.ai.edge.gallery.ui.common.chat.ChatMessageText
 import com.google.ai.edge.gallery.ui.common.chat.ChatMessageWarning
 import com.google.ai.edge.gallery.ui.common.chat.ChatSide
 import com.google.ai.edge.gallery.ui.modelmanager.ModelManagerViewModel
 import com.google.ai.edge.gallery.ui.theme.customColors
 import com.google.ai.edge.litertlm.ToolProvider
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.launch
 
@@ -70,7 +57,7 @@ fun TinyGardenScreen(
   bottomPadding: Dp,
   setAppBarControlsDisabled: (Boolean) -> Unit,
   setTopBarVisible: (Boolean) -> Unit,
-  commandFlow: Flow<TinyGardenCommand>,
+  commandFlow: Flow<TinyGardenCommand>, // kept for signature compatibility
   viewModel: TinyGardenViewModel = hiltViewModel(),
 ) {
   val uiState by viewModel.uiState.collectAsState()
@@ -95,7 +82,6 @@ fun TinyGardenScreen(
           modelManagerViewModel = modelManagerViewModel,
           tools = tools,
           bottomPadding = bottomPadding,
-          commandFlow = commandFlow,
           viewModel = viewModel,
           setAppBarControlsDisabled = setAppBarControlsDisabled,
           setTopBarVisible = setTopBarVisible,
@@ -113,53 +99,63 @@ fun TinyGardenScreen(
   }
 }
 
-// ── Canvas JRPG renderer — no KorGE, pure Compose ───────────────────────────
 @Composable
-fun JrpgBattleCanvas(
-  jrpgState: JrpgState,
-  heroAttacking: Boolean,
-  goblinAttacking: Boolean,
-  magicFx: Boolean,
+fun GameRenderer(
+  gameState: GameState,
   modifier: Modifier = Modifier,
 ) {
-  val heroOffsetX by animateFloatAsState(if (heroAttacking) 80f else 0f, tween(150), label = "hx")
-  val goblinOffsetX by animateFloatAsState(if (goblinAttacking) -80f else 0f, tween(150), label = "gx")
-  val magicAlpha by animateFloatAsState(if (magicFx) 1f else 0f, tween(300), label = "mx")
-
   Canvas(modifier = modifier) {
     val w = size.width; val h = size.height
-    drawRect(brush = Brush.verticalGradient(listOf(Color(0xFF0D0D2B), Color(0xFF1A1A3A)), 0f, h))
-    drawRect(Color(0xFF2A2A5A), Offset(0f, h * 0.72f), Size(w, h * 0.28f))
+    
+    if (gameState.mode == GameMode.OVERWORLD) {
+        // OVERWORLD
+        drawRect(Color(0xFF2E8B57)) // Grass
+        for (i in 0..10) {
+            drawLine(Color(0xFF228B22), Offset(0f, i * 64f), Offset(w, i * 64f))
+            drawLine(Color(0xFF228B22), Offset(i * 64f, 0f), Offset(i * 64f, h))
+        }
+        drawRect(Color(0xFF555555), Offset(8 * 64f, 2 * 64f), Size(128f, 128f)) // Castle
+        
+        // Player
+        drawRect(Color(0xFF0000FF), Offset(gameState.player.x * 64f + 16f, gameState.player.y * 64f + 16f), Size(32f, 32f))
+        
+        // Enemies
+        gameState.getEnemies().forEach { enemy ->
+            drawRect(Color(0xFFFF0000), Offset(enemy.x * 64f + 16f, enemy.y * 64f + 16f), Size(32f, 32f))
+        }
+    } else {
+        // BATTLE
+        drawRect(brush = Brush.verticalGradient(listOf(Color(0xFF0D0D2B), Color(0xFF1A1A3A)), 0f, h))
+        drawRect(Color(0xFF2A2A5A), Offset(0f, h * 0.72f), Size(w, h * 0.28f))
 
-    // Enemy
-    val enemyHpRatio = (jrpgState.enemyHp.toFloat() / jrpgState.enemyMaxHp.toFloat()).coerceIn(0f, 1f)
-    translate(w * 0.68f + goblinOffsetX, h * 0.25f) {
-      drawRect(Color(0xFF228B22), Offset(-30f, 0f), Size(60f, 90f))
-      drawCircle(Color(0xFF32CD32), 28f, Offset(0f, -28f))
-      drawCircle(Color.Red, 5f, Offset(-10f, -30f))
-      drawCircle(Color.Red, 5f, Offset(10f, -30f))
-      drawRect(Color(0xFF333333), Offset(-35f, -70f), Size(70f, 10f))
-      drawRect(Color(0xFFCC2222), Offset(-35f, -70f), Size(70f * enemyHpRatio, 10f))
-    }
+        // First Enemy
+        val enemy = gameState.getEnemies().firstOrNull()
+        if (enemy != null) {
+            val enemyHpRatio = (enemy.hp.toFloat() / enemy.maxHp.toFloat()).coerceIn(0f, 1f)
+            translate(w * 0.68f, h * 0.25f) {
+              drawRect(Color(0xFF228B22), Offset(-30f, 0f), Size(60f, 90f))
+              drawCircle(Color(0xFF32CD32), 28f, Offset(0f, -28f))
+              drawCircle(Color.Red, 5f, Offset(-10f, -30f))
+              drawCircle(Color.Red, 5f, Offset(10f, -30f))
+              drawRect(Color(0xFF333333), Offset(-35f, -70f), Size(70f, 10f))
+              drawRect(Color(0xFFCC2222), Offset(-35f, -70f), Size(70f * enemyHpRatio, 10f))
+            }
+        }
 
-    // Player
-    val playerHpRatio = (jrpgState.playerHp.toFloat() / jrpgState.playerMaxHp.toFloat()).coerceIn(0f, 1f)
-    val heroBodyColor = if (magicAlpha > 0.5f) Color(0xFFAA44FF) else Color(0xFF2244CC)
-    translate(w * 0.22f + heroOffsetX, h * 0.3f) {
-      drawRect(Color(0xFF0A0A66), Offset(-25f, 20f), Size(50f, 80f))
-      drawRect(heroBodyColor, Offset(-20f, 0f), Size(40f, 75f))
-      drawCircle(Color(0xFFFFDDAA), 22f, Offset(0f, -22f))
-      drawRect(Color(0xFF333333), Offset(-40f, -65f), Size(80f, 10f))
-      drawRect(Color(0xFF22AACC), Offset(-40f, -65f), Size(80f * playerHpRatio, 10f))
-    }
-
-    if (magicAlpha > 0.1f) {
-      drawCircle(Color(0x55FFFF00).copy(alpha = 0.4f * magicAlpha), 60f * magicAlpha, Offset(w * 0.68f, h * 0.42f))
+        // Player
+        val player = gameState.player
+        val playerHpRatio = (player.hp.toFloat() / player.maxHp.toFloat()).coerceIn(0f, 1f)
+        translate(w * 0.22f, h * 0.3f) {
+          drawRect(Color(0xFF0A0A66), Offset(-25f, 20f), Size(50f, 80f))
+          drawRect(Color(0xFF2244CC), Offset(-20f, 0f), Size(40f, 75f))
+          drawCircle(Color(0xFFFFDDAA), 22f, Offset(0f, -22f))
+          drawRect(Color(0xFF333333), Offset(-40f, -65f), Size(80f, 10f))
+          drawRect(Color(0xFF22AACC), Offset(-40f, -65f), Size(80f * playerHpRatio, 10f))
+        }
     }
   }
 }
 
-// ── Main UI ──────────────────────────────────────────────────────────────────
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainUi(
@@ -170,7 +166,6 @@ fun MainUi(
   viewModel: TinyGardenViewModel,
   setAppBarControlsDisabled: (Boolean) -> Unit,
   setTopBarVisible: (Boolean) -> Unit,
-  commandFlow: Flow<TinyGardenCommand>,
   holdToDictateViewModel: HoldToDictateViewModel = hiltViewModel(),
 ) {
   val modelManagerUiState by modelManagerViewModel.uiState.collectAsState()
@@ -186,11 +181,6 @@ fun MainUi(
   val snackbarHostState = remember { SnackbarHostState() }
   val context = LocalContext.current
 
-  // Local animation state — no ViewModel needed
-  var heroAttacking by remember { mutableStateOf(false) }
-  var goblinAttacking by remember { mutableStateOf(false) }
-  var magicFx by remember { mutableStateOf(false) }
-
   val taskColor = getTaskBgGradientColors(task = task)[1]
   val curDownloadStatus = modelManagerUiState.modelDownloadStatus[model.name]?.status
 
@@ -201,23 +191,6 @@ fun MainUi(
   BackHandler(enabled = showConversationHistoryPanel) { showConversationHistoryPanel = false }
   LaunchedEffect(showConversationHistoryPanel) { setTopBarVisible(!showConversationHistoryPanel) }
 
-  LaunchedEffect(Unit) {
-    commandFlow.collect { command ->
-      val actionName = command.action.name
-      val battleText = "Player used ${command.value.ifEmpty { actionName }} on ${command.target} for ${command.damage} damage!"
-      viewModel.updateBattleLog(battleText)
-      viewModel.applyDamage(command.target, command.damage)
-      viewModel.addMessage(message = ChatMessageText(content = battleText, side = ChatSide.AGENT))
-      // Trigger animations locally
-      when (command.action) {
-        JrpgAction.ATTACK -> { heroAttacking = true; delay(300); heroAttacking = false }
-        JrpgAction.MAGIC  -> { magicFx = true; delay(500); magicFx = false }
-        JrpgAction.ENEMY_ATTACK -> { goblinAttacking = true; delay(300); goblinAttacking = false }
-        else -> {}
-      }
-    }
-  }
-
   val noFunctionCallWarningMessage = stringResource(R.string.warning_no_function_call)
   val noFunctionCallSnackbarMessage = stringResource(R.string.snackbar_no_function_call)
 
@@ -227,12 +200,7 @@ fun MainUi(
       viewModel.getCommand(
         model = model,
         instructionText = text,
-        onDone = { _ ->
-          if (uiState.messages.isEmpty() || uiState.messages.last().side != ChatSide.AGENT) {
-            viewModel.addMessage(message = ChatMessageWarning(content = noFunctionCallWarningMessage))
-            scope.launch { snackbarHostState.showSnackbar(noFunctionCallSnackbarMessage, withDismissAction = true) }
-          }
-        },
+        onDone = { _ -> },
         onError = { error -> errorDialogContent = error; showErrorDialog = true },
       )
       firebaseAnalytics?.logEvent(GalleryEvent.GENERATE_ACTION.id, Bundle().apply {
@@ -250,11 +218,8 @@ fun MainUi(
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
       Column(modifier = Modifier.padding(bottom = if (WindowInsets.ime.getBottom(LocalDensity.current) == 0) bottomPadding else 12.dp).fillMaxSize()) {
         Column(modifier = Modifier.weight(1f).fillMaxWidth().padding(16.dp)) {
-          JrpgBattleCanvas(
-            jrpgState = uiState.jrpgState,
-            heroAttacking = heroAttacking,
-            goblinAttacking = goblinAttacking,
-            magicFx = magicFx,
+          GameRenderer(
+            gameState = uiState.gameState,
             modifier = Modifier.fillMaxWidth().weight(1f).border(4.dp, Color.White, RoundedCornerShape(8.dp))
           )
           Spacer(modifier = Modifier.height(16.dp))
@@ -264,7 +229,7 @@ fun MainUi(
               .background(Brush.verticalGradient(listOf(Color(0xFF0000AA), Color(0xFF000033))), RoundedCornerShape(8.dp))
               .padding(16.dp)
           ) {
-            Text(uiState.jrpgState.battleLog, color = Color.White, fontSize = 18.sp, lineHeight = 24.sp)
+            Text(uiState.gameState.battleLog.takeLast(3).joinToString("\n"), color = Color.White, fontSize = 18.sp, lineHeight = 24.sp)
           }
         }
         Row(
@@ -312,7 +277,6 @@ fun MainUi(
       text = {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
           Text(errorDialogContent, style = MaterialTheme.typography.bodyMedium)
-          Text(stringResource(R.string.reset_note), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.customColors.warningTextColor)
         }
       },
       onDismissRequest = { showErrorDialog = false; errorDialogContent = "" },
@@ -321,7 +285,6 @@ fun MainUi(
         Button(
           onClick = {
             showErrorDialog = false; errorDialogContent = ""
-            viewModel.resetEngine(context = context, model = model, tools = tools, onError = { errorDialogContent = it; showErrorDialog = true })
           },
           colors = ButtonDefaults.buttonColors(containerColor = taskColor),
         ) { Text(stringResource(R.string.reset), color = Color.White) }
