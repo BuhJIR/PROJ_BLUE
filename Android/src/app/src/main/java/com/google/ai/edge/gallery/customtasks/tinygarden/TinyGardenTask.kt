@@ -1,16 +1,19 @@
 package com.google.ai.edge.gallery.customtasks.tinygarden
 
+import android.content.Context
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.LocalFlorist
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.ui.unit.Dp
+import com.google.ai.edge.gallery.R
+import com.google.ai.edge.gallery.customtasks.common.CustomTask
+import com.google.ai.edge.gallery.customtasks.common.CustomTaskData
 import com.google.ai.edge.gallery.data.BuiltInTaskId
+import com.google.ai.edge.gallery.data.Category
 import com.google.ai.edge.gallery.data.Model
 import com.google.ai.edge.gallery.data.Task
-import com.google.ai.edge.gallery.ui.common.chat.ChatMessageWarning
-import com.google.ai.edge.gallery.ui.common.chat.ChatSide
-import com.google.ai.edge.gallery.ui.customtask.CustomTask
 import com.google.ai.edge.gallery.ui.llmchat.LlmChatModelHelper
+import com.google.ai.edge.litertlm.Contents
+import com.google.ai.edge.litertlm.tool
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.channels.Channel
@@ -30,46 +33,72 @@ private const val SYSTEM_PROMPT =
 class TinyGardenTask @Inject constructor() : CustomTask {
   private val _updateChannel = Channel<TinyGardenCommand>(Channel.BUFFERED)
   private val commandFlow = _updateChannel.receiveAsFlow()
+  
+  override val task =
+    Task(
+      id = BuiltInTaskId.LLM_TINY_GARDEN,
+      label = "PROJ☆BLUE JRPG",
+      description =
+        "Use natural language to explore and fight in an AI-driven JRPG.",
+      shortDescription = "Explore an AI-driven JRPG",
+      docUrl = "https://github.com/google-ai-edge/LiteRT-LM/blob/main/kotlin/README.md",
+      sourceCodeUrl =
+        "https://github.com/google-ai-edge/gallery/blob/main/Android/src/app/src/main/java/com/google/ai/edge/gallery/customtasks/tinygarden",
+      category = Category.LLM,
+      icon = Icons.Outlined.LocalFlorist,
+      agentNameRes = R.string.chat_agent_agent_name,
+      models = mutableListOf(),
+      handleModelConfigChangesInTask = true,
+      experimental = true,
+      defaultSystemPrompt = SYSTEM_PROMPT,
+    )
 
   override fun initializeModelFn(
-    scope: CoroutineScope,
+    context: Context,
+    coroutineScope: CoroutineScope,
     model: Model,
-    systemInstruction: String?,
-    llmChatModelHelper: LlmChatModelHelper,
-    onDone: () -> Unit,
-    onError: (String) -> Unit
+    systemInstruction: Contents?,
+    onDone: (error: String) -> Unit,
   ) {
-    llmChatModelHelper.resetChat(
+    clearQueue()
+    LlmChatModelHelper.initialize(
+      context = context,
       model = model,
-      systemInstruction = getTinyGardenSystemPrompt(model),
-      toolSets = listOf(),
+      taskId = task.id,
+      supportImage = false,
+      supportAudio = false,
+      onDone = onDone,
+      systemInstruction = Contents.of(SYSTEM_PROMPT),
+      tools = listOf(),
+      enableConversationConstrainedDecoding = true,
     )
-    onDone()
   }
 
   override fun cleanUpModelFn(
-    scope: CoroutineScope,
+    context: Context,
+    coroutineScope: CoroutineScope,
     model: Model,
-    llmChatModelHelper: LlmChatModelHelper,
-    onDone: () -> Unit
+    onDone: () -> Unit,
   ) {
-    onDone()
+    clearQueue()
+    LlmChatModelHelper.cleanUp(model = model, onDone = onDone)
   }
 
   @Composable
   override fun MainScreen(data: Any) {
-    val request = data as CustomTask.MainScreenRequest
-    
+    val customTaskData = data as CustomTaskData
     TinyGardenScreen(
-      task = request.task,
-      modelManagerViewModel = request.modelManagerViewModel,
+      task = task,
+      modelManagerViewModel = customTaskData.modelManagerViewModel,
       tools = listOf(),
-      bottomPadding = request.bottomPadding,
-      setAppBarControlsDisabled = request.setAppBarControlsDisabled,
-      setTopBarVisible = request.setTopBarVisible,
+      bottomPadding = customTaskData.bottomPadding,
       commandFlow = commandFlow,
+      setAppBarControlsDisabled = customTaskData.setAppBarControlsDisabled,
+      setTopBarVisible = customTaskData.setTopBarVisible,
     )
   }
-}
 
-fun getTinyGardenSystemPrompt(model: Model): String = SYSTEM_PROMPT
+  private fun clearQueue() {
+    while (_updateChannel.tryReceive().isSuccess) {}
+  }
+}
