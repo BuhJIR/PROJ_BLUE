@@ -137,10 +137,10 @@ constructor(
     onError: (String) -> Unit,
   ) {
     viewModelScope.launch(Dispatchers.Default) {
-      isResettingConversation.value = true
+      _isResettingConversation.value = true
       setResettingEngine(resetting = true)
       try {
-        llmChatModelHelper.resetChat(
+        llmChatModelHelper.resetConversation(
           model = model,
           systemInstruction = systemPrompt,
           toolSets = listOf(aiBridge),
@@ -150,7 +150,7 @@ constructor(
         onError(e.message ?: context.getString(R.string.unknown_error))
       } finally {
         setResettingEngine(resetting = false)
-        isResettingConversation.value = false
+        _isResettingConversation.value = false
       }
     }
   }
