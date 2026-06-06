@@ -1,19 +1,3 @@
-/*
- * Copyright 2025 Google LLC
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 package com.google.ai.edge.gallery.customtasks.tinygarden
 
 import android.content.Context
@@ -32,7 +16,6 @@ import com.google.ai.edge.gallery.ui.llmchat.LlmChatModelHelper
 import com.google.ai.edge.gallery.ui.llmchat.LlmModelInstance
 import com.google.ai.edge.litertlm.Content
 import com.google.ai.edge.litertlm.Contents
-import com.google.ai.edge.litertlm.ToolProvider
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
@@ -45,35 +28,14 @@ import kotlinx.coroutines.launch
 
 private const val TAG = "AGTGViewModel"
 
-data class JrpgState(
-  val playerHp: Int = 100,
-  val playerMaxHp: Int = 100,
-  val playerMp: Int = 50,
-  val playerMaxMp: Int = 50,
-  val enemyName: String = "Goblin",
-  val enemyHp: Int = 50,
-  val enemyMaxHp: Int = 50,
-  val battleLog: String = "A wild Goblin appeared!"
-)
-
-/** The UI state of the task. */
 data class TinyGardenUiState(
-  // Whether the app is processing the user input.
   val processing: Boolean = false,
-
-  // Whether the app is resetting the engine (without resetting the game).
   val resettingEngine: Boolean = false,
-
-  // The messages in the conversation history.
   val messages: List<ChatMessage> = listOf(),
-
-  // The number of turns.
   val numTurns: Int = 0,
-
-  val jrpgState: JrpgState = JrpgState()
+  val gameState: GameState = GameState()
 )
 
-/** The ViewModel of the task screen. */
 @HiltViewModel
 class TinyGardenViewModel
 @Inject
@@ -87,11 +49,15 @@ constructor(
   private val _isResettingConversation = MutableStateFlow(false)
   private val isResettingConversation = _isResettingConversation.asStateFlow()
 
-  /**
-   * Sends the user instruction to the model and processes the response.
-   *
-   * The tools defined in [TinyGardenTools] will be invoked during the process.
-   */
+  val gameEngine = GameEngine()
+  val aiBridge = AiSoulBridge(gameEngine)
+
+  init {
+      gameEngine.observe { newState ->
+          _uiState.update { it.copy(gameState = newState) }
+      }
+  }
+
   fun getCommand(
     model: Model,
     instructionText: String,
@@ -103,21 +69,12 @@ constructor(
       return
     }
 
-    // Count turn.
     incrementNumTurns()
-    Log.d(TAG, "Turn #: ${uiState.value.numTurns}")
-
-    // Add user prompt to history.
     this.addMessage(message = ChatMessageText(content = instructionText, side = ChatSide.USER))
 
     viewModelScope.launch(Dispatchers.Default) {
-      Log.d(TAG, "Start processing user instruction: '$instructionText'")
       setProcessing(processing = true)
-
-      // Wait until the conversation is NOT resetting.
-      Log.d(TAG, "Waiting for any ongoing conversation reset to be done...")
       isResettingConversation.first { !it }
-      Log.d(TAG, "Done waiting. Start inference.")
 
       val instance = model.instance as LlmModelInstance
       val conversation = instance.conversation
@@ -129,10 +86,16 @@ constructor(
       try {
         val responseMessage = conversation.sendMessage(Contents.of(contents))
         val response = responseMessage.toString()
-        Log.d(TAG, "Done processing user instruction. Response: $response")
+        
+        if (response.trim().startsWith("{") && response.trim().endsWith("}")) {
+            aiBridge.processPureJson(response)
+        } else {
+            gameEngine.logMessage("Soul: " + response)
+        }
+
+        addMessage(message = ChatMessageText(content = response, side = ChatSide.AGENT))
         onDone(response)
       } catch (e: Exception) {
-        Log.e(TAG, "Failed to run inference", e)
         onError(e.message ?: context.getString(R.string.unknown_error))
       } finally {
         setProcessing(processing = false)
@@ -162,97 +125,50 @@ constructor(
     _uiState.update { uiState.value.copy(numTurns = uiState.value.numTurns + 1) }
   }
 
-  fun updateBattleLog(log: String) {
-    _uiState.update { 
-      uiState.value.copy(jrpgState = uiState.value.jrpgState.copy(battleLog = log)) 
-    }
-  }
-
-  fun applyDamage(target: String, amount: Int) {
-    _uiState.update { state ->
-      val currentJrpg = state.jrpgState
-      if (target.lowercase() == "player") {
-        state.copy(jrpgState = currentJrpg.copy(playerHp = maxOf(0, currentJrpg.playerHp - amount)))
-      } else {
-        state.copy(jrpgState = currentJrpg.copy(enemyHp = maxOf(0, currentJrpg.enemyHp - amount)))
-      }
-    }
-  }
-
   fun resetNumTurns() {
     _uiState.update { uiState.value.copy(numTurns = 0) }
   }
 
   fun resetEngine(
-    context: Context,
     model: Model,
-    tools: List<ToolProvider>,
-    onError: (error: String) -> Unit,
+    systemPrompt: String,
+    llmChatModelHelper: LlmChatModelHelper,
+    onDone: () -> Unit,
+    onError: (String) -> Unit,
   ) {
-    resetNumTurns()
-
     viewModelScope.launch(Dispatchers.Default) {
+      isResettingConversation.value = true
       setResettingEngine(resetting = true)
-      LlmChatModelHelper.cleanUp(
-        model = model,
-        onDone = {
-          LlmChatModelHelper.initialize(
-            context = context,
-            model = model,
-            taskId = BuiltInTaskId.LLM_TINY_GARDEN,
-            supportImage = false,
-            supportAudio = false,
-            onDone = { error ->
-              setResettingEngine(resetting = false)
-              if (error.isNotEmpty()) {
-                onError(error)
-              }
-              addMessage(
-                message =
-                  ChatMessageWarning(content = context.getString(R.string.engin_reset_message))
-              )
-            },
-            systemInstruction = Contents.of(getTinyGardenSystemPrompt(
-              playerHp = uiState.value.jrpgState.playerHp,
-              enemyHp = uiState.value.jrpgState.enemyHp,
-              enemyName = uiState.value.jrpgState.enemyName
-            )),
-            tools = tools,
-            enableConversationConstrainedDecoding = true,
-          )
-        },
-      )
+      try {
+        llmChatModelHelper.resetChat(
+          model = model,
+          systemInstruction = systemPrompt,
+          toolSets = listOf(aiBridge),
+        )
+        onDone()
+      } catch (e: Exception) {
+        onError(e.message ?: context.getString(R.string.unknown_error))
+      } finally {
+        setResettingEngine(resetting = false)
+        isResettingConversation.value = false
+      }
     }
   }
 
   fun resetConversation(
     model: Model,
-    tools: List<ToolProvider>
+    systemPrompt: String,
+    llmChatModelHelper: LlmChatModelHelper,
+    onError: (String) -> Unit,
   ) {
-    resetNumTurns()
-
-    viewModelScope.launch(Dispatchers.Default) {
-      _isResettingConversation.value = true
-      val curSystemPrompt =
-        getTinyGardenSystemPrompt(
-          playerHp = uiState.value.jrpgState.playerHp,
-          enemyHp = uiState.value.jrpgState.enemyHp,
-          enemyName = uiState.value.jrpgState.enemyName
-        )
-      Log.d(TAG, "Current system prompt:\n$curSystemPrompt")
-      LlmChatModelHelper.resetConversation(
-        model = model,
-        supportImage = false,
-        supportAudio = false,
-        systemInstruction = Contents.of(curSystemPrompt),
-        tools = tools,
-        enableConversationConstrainedDecoding = true,
-      )
-      _isResettingConversation.value = false
-      addMessage(
-        message =
-          ChatMessageWarning(content = context.getString(R.string.conversation_reset_message))
-      )
-    }
+    this.clearMessages()
+    this.resetNumTurns()
+    resetEngine(
+      model = model,
+      systemPrompt = systemPrompt,
+      llmChatModelHelper = llmChatModelHelper,
+      onDone = {},
+      onError = onError,
+    )
   }
 }
