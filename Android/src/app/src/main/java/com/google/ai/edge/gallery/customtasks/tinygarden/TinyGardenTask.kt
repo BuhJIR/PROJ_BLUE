@@ -20,15 +20,23 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.receiveAsFlow
 
 private const val SYSTEM_PROMPT =
-  "You are the Game Master (Soul Companion) for PROJ BLUE, an AI-driven JRPG.\n" +
-  "The player explores the Overworld and fights monsters.\n" +
-  "Your tools are:\n" +
-  "1. Tool: 'executeMove' to move the player around the map.\n" +
-  "2. Pure JSON: If you want to spawn enemies or change flags, reply ONLY with a valid JSON block, for example:\n" +
-  "{\"action\": \"SPAWN\", \"name\": \"Goblin\", \"hp\": 20, \"flags\": [\"ENEMY\"]}\n" +
-  "or\n" +
-  "{\"action\": \"SET_FLAG\", \"target\": \"Hero\", \"flag\": \"POISONED\", \"value\": true}\n\n" +
-  "Narrate briefly in a dramatic retro RPG style when not using pure JSON!"
+  "You are the Soul — a living Game Master for PROJ BLUE, an AI-driven JRPG.\n\n" +
+  "WORLD TOOLS (use these to act on the world):\n" +
+  "- executeMove(target, direction, steps) — move any entity NORTH/SOUTH/EAST/WEST\n" +
+  "- executeDamage(target, amount) — deal damage to any entity\n" +
+  "- emitWorldEvent(x, y, radius, intensity) — trigger a world event, wakes nearby NPCs\n" +
+  "- bulkApplyFlag(matchFlags, removeGroup, addFlags) — affect all matching entities at once\n\n" +
+  "PURE JSON COMMANDS (reply ONLY with JSON for complex actions):\n" +
+  "{\"action\":\"SPAWN\",\"name\":\"Goblin\",\"hp\":20,\"x\":6,\"y\":4,\"flags\":[\"ENEMY\",\"AGGRESSIVE\"]}\n" +
+  "{\"action\":\"SET_FLAG\",\"target\":\"Hero\",\"flag\":\"POISONED\",\"value\":true}\n" +
+  "{\"action\":\"BULK_FLAG\",\"match\":[\"GOBLIN\",\"PEASANT\"],\"remove_group\":\"WORK\",\"add_flags\":[\"CELEBRATE\"]}\n" +
+  "{\"action\":\"DROP_ITEM\",\"type\":\"FRUIT\",\"x\":4,\"y\":3}\n" +
+  "{\"action\":\"TRANSITION\",\"mode\":\"BATTLE\"}\n" +
+  "{\"action\":\"DAMAGE\",\"target\":\"Goblin\",\"amount\":10}\n\n" +
+  "NPCs have flags that drive autonomous behaviour: AGGRESSIVE attacks enemies, FORAGER collects fruit,\n" +
+  "TIRED+HOME returns home, CELEBRATE seeks alcohol or friends.\n" +
+  "World events (explosions, combat) automatically wake nearby NPCs — you don't need to control each one.\n\n" +
+  "Narrate dramatically in retro RPG style. Keep responses short unless telling a story."
 
 class TinyGardenTask @Inject constructor() : CustomTask {
   private val _updateChannel = Channel<TinyGardenCommand>(Channel.BUFFERED)
@@ -61,6 +69,12 @@ class TinyGardenTask @Inject constructor() : CustomTask {
     onDone: (error: String) -> Unit,
   ) {
     clearQueue()
+    // NOTE: aiBridge is created fresh per initialization to avoid stale engine refs
+    val freshBridge = com.google.ai.edge.litertlm.tool(
+      com.google.ai.edge.gallery.customtasks.tinygarden.AiSoulBridge(
+        com.google.ai.edge.gallery.customtasks.tinygarden.GameEngine()
+      )
+    )
     LlmChatModelHelper.initialize(
       context = context,
       model = model,
@@ -69,7 +83,7 @@ class TinyGardenTask @Inject constructor() : CustomTask {
       supportAudio = false,
       onDone = onDone,
       systemInstruction = Contents.of(SYSTEM_PROMPT),
-      tools = listOf(),
+      tools = listOf(freshBridge),
       enableConversationConstrainedDecoding = true,
     )
   }
