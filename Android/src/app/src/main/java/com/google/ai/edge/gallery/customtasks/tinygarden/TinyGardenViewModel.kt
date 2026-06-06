@@ -142,8 +142,12 @@ constructor(
       try {
         llmChatModelHelper.resetConversation(
           model = model,
-          systemInstruction = systemPrompt,
-          toolSets = listOf(aiBridge),
+          supportImage = false,
+          supportAudio = false,
+          systemInstruction = Contents.of(systemPrompt),
+          tools = listOf(com.google.ai.edge.litertlm.tool(aiBridge)),
+          enableConversationConstrainedDecoding = true,
+          initialMessages = listOf()
         )
         onDone()
       } catch (e: Exception) {
