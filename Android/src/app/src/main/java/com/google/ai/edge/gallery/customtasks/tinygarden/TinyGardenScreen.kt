@@ -101,60 +101,13 @@ fun TinyGardenScreen(
 }
 
 @Composable
+@Composable
 fun GameRenderer(
   gameState: GameState,
   modifier: Modifier = Modifier,
 ) {
-  Canvas(modifier = modifier) {
-    val w = size.width; val h = size.height
-    
-    if (gameState.mode == GameMode.OVERWORLD) {
-        // OVERWORLD
-        drawRect(Color(0xFF2E8B57)) // Grass
-        for (i in 0..10) {
-            drawLine(Color(0xFF228B22), Offset(0f, i * 64f), Offset(w, i * 64f))
-            drawLine(Color(0xFF228B22), Offset(i * 64f, 0f), Offset(i * 64f, h))
-        }
-        drawRect(Color(0xFF555555), Offset(8 * 64f, 2 * 64f), Size(128f, 128f)) // Castle
-        
-        // Player
-        drawRect(Color(0xFF0000FF), Offset(gameState.player.x * 64f + 16f, gameState.player.y * 64f + 16f), Size(32f, 32f))
-        
-        // Enemies
-        gameState.getEnemies().forEach { enemy ->
-            drawRect(Color(0xFFFF0000), Offset(enemy.x * 64f + 16f, enemy.y * 64f + 16f), Size(32f, 32f))
-        }
-    } else {
-        // BATTLE
-        drawRect(brush = Brush.verticalGradient(listOf(Color(0xFF0D0D2B), Color(0xFF1A1A3A)), 0f, h))
-        drawRect(Color(0xFF2A2A5A), Offset(0f, h * 0.72f), Size(w, h * 0.28f))
-
-        // First Enemy
-        val enemy = gameState.getEnemies().firstOrNull()
-        if (enemy != null) {
-            val enemyHpRatio = (enemy.hp.toFloat() / enemy.maxHp.toFloat()).coerceIn(0f, 1f)
-            translate(w * 0.68f, h * 0.25f) {
-              drawRect(Color(0xFF228B22), Offset(-30f, 0f), Size(60f, 90f))
-              drawCircle(Color(0xFF32CD32), 28f, Offset(0f, -28f))
-              drawCircle(Color.Red, 5f, Offset(-10f, -30f))
-              drawCircle(Color.Red, 5f, Offset(10f, -30f))
-              drawRect(Color(0xFF333333), Offset(-35f, -70f), Size(70f, 10f))
-              drawRect(Color(0xFFCC2222), Offset(-35f, -70f), Size(70f * enemyHpRatio, 10f))
-            }
-        }
-
-        // Player
-        val player = gameState.player
-        val playerHpRatio = (player.hp.toFloat() / player.maxHp.toFloat()).coerceIn(0f, 1f)
-        translate(w * 0.22f, h * 0.3f) {
-          drawRect(Color(0xFF0A0A66), Offset(-25f, 20f), Size(50f, 80f))
-          drawRect(Color(0xFF2244CC), Offset(-20f, 0f), Size(40f, 75f))
-          drawCircle(Color(0xFFFFDDAA), 22f, Offset(0f, -22f))
-          drawRect(Color(0xFF333333), Offset(-40f, -65f), Size(80f, 10f))
-          drawRect(Color(0xFF22AACC), Offset(-40f, -65f), Size(80f * playerHpRatio, 10f))
-        }
-    }
-  }
+  // Изометрический рендерер — OVERWORLD и BATTLE
+  IsoMapRenderer(gameState = gameState, modifier = modifier)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
