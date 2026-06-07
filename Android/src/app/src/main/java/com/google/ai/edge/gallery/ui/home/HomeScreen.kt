@@ -430,28 +430,7 @@ fun HomeScreen(
     )
   }
 
-  if (uiState.loadingModelAllowlistError.isNotEmpty()) {
-    AlertDialog(
-      icon = {
-        Icon(
-          Icons.Rounded.Error,
-          contentDescription = stringResource(R.string.cd_error),
-          tint = MaterialTheme.colorScheme.error,
-        )
-      },
-      title = { Text(uiState.loadingModelAllowlistError) },
-      text = { Text("Please check your internet connection and try again later.") },
-      onDismissRequest = { modelManagerViewModel.loadModelAllowlist() },
-      confirmButton = {
-        TextButton(onClick = { modelManagerViewModel.loadModelAllowlist() }) { Text("Retry") }
-      },
-      dismissButton = {
-        TextButton(onClick = { modelManagerViewModel.clearLoadModelAllowlistError() }) {
-          Text("Cancel")
-        }
-      },
-    )
-  }
+  // PROJ_BLUE: model list error dialog disabled (offline mode)
 }
 
 @Composable
