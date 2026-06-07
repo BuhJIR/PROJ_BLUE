@@ -1,0 +1,15 @@
+{
+  "player": {
+    "idle_front": { "file": "sprites/player_idle_front.png", "frameW": 214, "frameH": 297, "frames": 45, "fps": 12 },
+    "idle_back":  { "file": "sprites/player_idle_back.png",  "frameW": 245, "frameH": 309, "frames": 45, "fps": 12 }
+  },
+  "entities": {
+    "knight":        { "file": "sprites/knight.png",        "frameW": 72,  "frameH": 120, "frames": 2,  "fps": 2  },
+    "mage":          { "file": "sprites/mage.png",          "frameW": 60,  "frameH": 120, "frames": 2,  "fps": 2  },
+    "skeleton_mage": { "file": "sprites/skeleton_mage.png", "frameW": 60,  "frameH": 120, "frames": 2,  "fps": 2  },
+    "skeleton_cpt":  { "file": "sprites/skeleton_cpt.png",  "frameW": 72,  "frameH": 118, "frames": 2,  "fps": 2  }
+  },
+  "tilesets": {
+    "trees": { "file": "sprites/tileset_trees.png", "tileW": 64, "tileH": 64 }
+  }
+}
