@@ -924,7 +924,7 @@ constructor(
 
         if (modelAllowlist == null) {
           _uiState.update {
-            uiState.value.copy(loadingModelAllowlistError = "Failed to load model list")
+            uiState.value.copy(loadingModelAllowlistError = "") // PROJ_BLUE: error suppressed, offline mode
           }
           return@launch
         }
