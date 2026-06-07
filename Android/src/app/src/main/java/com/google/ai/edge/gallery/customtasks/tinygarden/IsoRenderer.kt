@@ -18,6 +18,9 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.text.*
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.runtime.withFrameMillis
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import kotlin.math.roundToInt
 
 // ── Изометрические константы ─────────────────────────────────────────────────
@@ -287,10 +290,10 @@ fun DrawScope.drawSprite(
     }) {
         drawImage(
             image = sheet,
-            srcOffset = androidx.compose.ui.unit.IntOffset(srcLeft, 0),
-            srcSize = androidx.compose.ui.unit.IntSize(frameW, frameH),
-            dstOffset = androidx.compose.ui.unit.IntOffset.Zero,
-            dstSize = androidx.compose.ui.unit.IntSize(frameW, frameH),
+            srcOffset = IntOffset(srcLeft, 0),
+            srcSize = IntSize(frameW, frameH),
+            dstOffset = IntOffset.Zero,
+            dstSize = IntSize(frameW, frameH),
             filterQuality = FilterQuality.None,  // пиксельарт — без сглаживания
         )
     }
