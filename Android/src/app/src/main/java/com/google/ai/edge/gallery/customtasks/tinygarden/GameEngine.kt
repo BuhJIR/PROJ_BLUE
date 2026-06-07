@@ -41,6 +41,9 @@ class Entity(
     var y: Int = 0,
     var interestRadius: Float = 192f,  // как далеко entity "слышит" события
 ) : GameObject(name = name) {
+    // Изометрические координаты (алиасы для ясности в рендерере)
+    var col: Int get() = x; set(v) { x = v }
+    var row: Int get() = y; set(v) { y = v }
 
     val needs: MutableList<Need> = mutableListOf()
     val memory: MutableMap<String, Any> = mutableMapOf()
