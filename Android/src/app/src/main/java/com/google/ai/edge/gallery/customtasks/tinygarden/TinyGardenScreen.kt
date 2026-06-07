@@ -101,7 +101,6 @@ fun TinyGardenScreen(
 }
 
 @Composable
-@Composable
 fun GameRenderer(
   gameState: GameState,
   modifier: Modifier = Modifier,
