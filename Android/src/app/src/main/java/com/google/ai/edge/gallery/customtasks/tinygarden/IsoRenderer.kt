@@ -208,23 +208,14 @@ fun IsoMapRenderer(
                 drawCircle(color.copy(alpha = 0.9f), 10f, Offset(sx, sy - 56f))
             }
 
-            // HP бар (только если повреждён)
-            if (entity.hp < entity.maxHp && entity.maxHp > 0) {
-                val barW = 32f
-                val ratio = entity.hp.toFloat() / entity.maxHp.toFloat()
-                drawRect(Color(0x88000000), Offset(sx - barW/2 - 1, sy - 68f), androidx.compose.ui.geometry.Size(barW + 2, 6f))
-                drawRect(Color(0xFFCC2222), Offset(sx - barW/2, sy - 67f), androidx.compose.ui.geometry.Size(barW, 4f))
-                drawRect(Color(0xFF22CC44), Offset(sx - barW/2, sy - 67f), androidx.compose.ui.geometry.Size(barW * ratio, 4f))
-            }
-
-            // Имя
-            if (!entity.hasFlag("SILENT")) {
-                val nameLayout = textMeasurer.measure(
-                    entity.name,
-                    TextStyle(fontSize = 8.sp, fontFamily = FontFamily.Monospace,
-                        color = Color.White, fontWeight = FontWeight.Bold)
+            // Секционный HP bar — 6 секций, maxHp/6 HP на секцию (до 12 секций макс)
+            if (entity.maxHp > 0) {
+                drawSegmentedHpBar(
+                    cx = sx,
+                    cy = sy - 62f,
+                    hp = entity.hp,
+                    maxHp = entity.maxHp,
                 )
-                drawText(nameLayout, topLeft = Offset(sx - nameLayout.size.width / 2f, sy - 72f))
             }
         }
     }
@@ -296,5 +287,73 @@ fun DrawScope.drawSprite(
             dstSize = IntSize(frameW, frameH),
             filterQuality = FilterQuality.None,  // пиксельарт — без сглаживания
         )
+    }
+}
+
+// ── Секционный HP bar ─────────────────────────────────────────────────────────
+// segments = maxHp / 6, но не больше 12 секций
+// Каждая секция — маленький прямоугольник с зазором
+fun DrawScope.drawSegmentedHpBar(cx: Float, cy: Float, hp: Int, maxHp: Int) {
+    val segments = (maxHp / 6).coerceIn(1, 12)
+    val hpPerSeg = maxHp.toFloat() / segments
+    val segW = 7f
+    val segH = 5f
+    val gap = 1.5f
+    val totalW = segments * segW + (segments - 1) * gap
+    val startX = cx - totalW / 2f
+
+    // Фон всей полоски
+    drawRect(
+        Color(0xAA000000),
+        topLeft = Offset(startX - 2f, cy - 2f),
+        size = androidx.compose.ui.geometry.Size(totalW + 4f, segH + 4f)
+    )
+
+    for (i in 0 until segments) {
+        val segStartHp = i * hpPerSeg
+        val segEndHp = (i + 1) * hpPerSeg
+        val fill = when {
+            hp >= segEndHp -> 1f                          // полная секция
+            hp <= segStartHp -> 0f                        // пустая
+            else -> (hp - segStartHp) / hpPerSeg         // частичная
+        }
+
+        val x = startX + i * (segW + gap)
+
+        // Фон секции (пустая)
+        drawRect(
+            Color(0xFF333333),
+            topLeft = Offset(x, cy),
+            size = androidx.compose.ui.geometry.Size(segW, segH)
+        )
+
+        // Заполненная часть
+        if (fill > 0f) {
+            val color = when {
+                hp.toFloat() / maxHp > 0.5f -> Color(0xFF44DD44)   // зелёный
+                hp.toFloat() / maxHp > 0.25f -> Color(0xFFDDCC00)  // жёлтый
+                else -> Color(0xFFDD2222)                           // красный
+            }
+            drawRect(
+                color,
+                topLeft = Offset(x, cy),
+                size = androidx.compose.ui.geometry.Size(segW * fill, segH)
+            )
+            // Блик сверху
+            drawRect(
+                Color(0x55FFFFFF),
+                topLeft = Offset(x, cy),
+                size = androidx.compose.ui.geometry.Size(segW * fill, 1.5f)
+            )
+        }
+
+        // Разделитель между секциями
+        if (i < segments - 1) {
+            drawRect(
+                Color(0xFF111111),
+                topLeft = Offset(x + segW, cy),
+                size = androidx.compose.ui.geometry.Size(gap, segH)
+            )
+        }
     }
 }
