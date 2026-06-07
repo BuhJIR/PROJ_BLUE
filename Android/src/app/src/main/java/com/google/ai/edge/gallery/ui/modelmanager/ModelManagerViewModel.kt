@@ -916,17 +916,24 @@ constructor(
           }
         }
 
+        // PROJ_BLUE: load from bundled assets — no network needed
         if (modelAllowlist == null) {
-          // Skip internet loading as requested.
-          Log.d(TAG, "Internet loading disabled. Loading from disk.")
-          modelAllowlist = readModelAllowlistFromDisk()
+          try {
+            Log.d(TAG, "Loading model allowlist from bundled assets.")
+            val content = context.assets.open("model_allowlist.json")
+              .bufferedReader().use { it.readText() }
+            modelAllowlist = Gson().fromJson(content, ModelAllowlist::class.java)
+            Log.d(TAG, "Loaded allowlist from assets OK.")
+          } catch (e: Exception) {
+            Log.w(TAG, "Assets load failed, trying disk cache.", e)
+            modelAllowlist = readModelAllowlistFromDisk()
+          }
         }
 
+        // Last resort — empty allowlist so app starts without error
         if (modelAllowlist == null) {
-          _uiState.update {
-            uiState.value.copy(loadingModelAllowlistError = "") // PROJ_BLUE: error suppressed, offline mode
-          }
-          return@launch
+          Log.w(TAG, "No allowlist found — using empty list.")
+          modelAllowlist = ModelAllowlist(models = listOf())
         }
 
         Log.d(TAG, "Allowlist: $modelAllowlist")
