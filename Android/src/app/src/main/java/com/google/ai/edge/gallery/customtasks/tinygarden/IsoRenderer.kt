@@ -202,7 +202,8 @@ fun IsoMapRenderer(
             val sy = cy + iso.y
 
             // Выбираем спрайт по направлению
-            val dir = entity.memory["direction"] as? Direction ?: Direction.SOUTH
+            val dirStr = entity.memory["direction"] as? String ?: "SOUTH"
+            val dir = try { Direction.valueOf(dirStr) } catch (e: Exception) { Direction.SOUTH }
             val spriteKey = spritePath(
                 if (entity.id == gameState.player.id) "hero_white" else entity.name, dir
             )
