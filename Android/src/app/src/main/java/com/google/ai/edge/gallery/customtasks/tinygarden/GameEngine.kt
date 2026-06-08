@@ -171,15 +171,29 @@ class GameEngine {
         updateState {
             if (entityId.equals(player.name, ignoreCase = true)) {
                 val oldX = player.x; val oldY = player.y
-                val newPlayer = player.apply { x += dx; y += dy }
+                val newPlayer = player.apply {
+                    x += dx; y += dy
+                    // Обновляем направление для рендерера
+                    memory["direction"] = when {
+                        dx > 0 && dy == 0 -> "EAST"
+                        dx < 0 && dy == 0 -> "WEST"
+                        dy < 0            -> "NORTH"
+                        else              -> "SOUTH"
+                    }
+                }
                 spatialHash.move(newPlayer, oldX, oldY)
-                // Footstep event от игрока
                 eventBus.emit(WorldEvent(WorldEventType.FOOTSTEP, newPlayer.x.toFloat(), newPlayer.y.toFloat(), 0.4f, 96f, "player"))
                 copy(player = newPlayer)
             } else {
                 val e = entities[entityId] ?: return@updateState this
                 val oldX = e.x; val oldY = e.y
                 e.x += dx; e.y += dy
+                e.memory["direction"] = when {
+                    dx > 0 && dy == 0 -> "EAST"
+                    dx < 0 && dy == 0 -> "WEST"
+                    dy < 0            -> "NORTH"
+                    else              -> "SOUTH"
+                }
                 spatialHash.move(e, oldX, oldY)
                 copy(entities = entities)
             }
