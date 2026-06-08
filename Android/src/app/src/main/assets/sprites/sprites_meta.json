@@ -1,25 +1,33 @@
 {
-  "player": {
-    "idle_front": { "file": "sprites/player_idle_front.png", "frameW": 214, "frameH": 297, "frames": 45, "fps": 12 },
-    "idle_back":  { "file": "sprites/player_idle_back.png",  "frameW": 245, "frameH": 309, "frames": 45, "fps": 12 },
-    "ice_front":  { "file": "sprites/hero_ice_front.png",    "frameW": 225, "frameH": 311, "frames": 35, "fps": 12 },
-    "ice_back":   { "file": "sprites/hero_ice_back.png",     "frameW": 259, "frameH": 306, "frames": 35, "fps": 12 }
+  "sisters": {
+    "one":   { "key": "hero_white", "name": "One",   "principle": "ego, calculation",           "color": "#FFFFFF" },
+    "two":   { "key": "hero_ice",   "name": "Two",   "principle": "cooperation, game theory",   "color": "#A8D8EA" },
+    "three": { "key": "sister_3",   "name": "Three", "principle": "harmony, nature, flowers",   "color": "#FFD700" },
+    "four":  { "key": "sister_4",   "name": "Four",  "principle": "sacrifice, luck, chaos",     "color": "#4169E1" },
+    "five":  { "key": "sister_5",   "name": "Five",  "principle": "calm, creation, death",      "color": "#1C1C2E" },
+    "six":   { "key": "sister_6",   "name": "Six",   "principle": "choice, duality, spacetime", "color": "#9B59B6" }
+  },
+  "sprite_dirs": ["south","north","west","east"],
+  "sprite_frames": {
+    "hero_white": { "frameW": 245, "frameH": 309, "frames": 45, "fps": 12 },
+    "hero_ice":   { "frameW": 259, "frameH": 311, "frames": 35, "fps": 12 },
+    "sister_3":   { "frameW": 267, "frameH": 332, "frames": 35, "fps": 12 },
+    "sister_4":   { "frameW": 266, "frameH": 332, "frames": 35, "fps": 12 },
+    "sister_5":   { "frameW": 265, "frameH": 332, "frames": 36, "fps": 12 },
+    "sister_6":   { "frameW": 254, "frameH": 313, "frames": 36, "fps": 12 }
+  },
+  "dice": {
+    "d6": {
+      "faces": 6,
+      "default_assignment": ["one","two","three","four","five","six"]
+    }
   },
   "enemies": {
-    "enemy_skull": { "file": "sprites/enemy_skull.png", "frameW": 171, "frameH": 120, "frames": 2, "fps": 2 },
-    "enemy_red":   { "file": "sprites/enemy_red.png",   "frameW": 179, "frameH": 120, "frames": 2, "fps": 2 },
-    "skeleton_mage": { "file": "sprites/skeleton_mage.png", "frameW": 60, "frameH": 120, "frames": 2, "fps": 2 },
-    "skeleton_cpt":  { "file": "sprites/skeleton_cpt.png",  "frameW": 72, "frameH": 118, "frames": 2, "fps": 2 }
-  },
-  "npc": {
-    "knight": { "file": "sprites/knight.png", "frameW": 72, "frameH": 120, "frames": 2, "fps": 2 },
-    "mage":   { "file": "sprites/mage.png",   "frameW": 60, "frameH": 120, "frames": 2, "fps": 2 }
-  },
-  "tilesets": {
-    "trees": { "file": "sprites/tileset_trees.png", "tileW": 64, "tileH": 64 }
+    "enemy_skull": { "frameW": 171, "frameH": 120, "frames": 2, "fps": 2 },
+    "enemy_red":   { "frameW": 179, "frameH": 120, "frames": 2, "fps": 2 }
   },
   "backgrounds": {
-    "battle_plains": { "file": "backgrounds/battle_bg_1.jpg" },
-    "battle_desert": { "file": "backgrounds/battle_bg_2.jpg" }
+    "battle_plains": "backgrounds/battle_bg_1.jpg",
+    "battle_desert": "backgrounds/battle_bg_2.jpg"
   }
 }
