@@ -97,6 +97,28 @@ fun generateTestMap(): IsoMap {
 }
 
 // ── Sprite loader ─────────────────────────────────────────────────────────────
+// ── Направления движения ────────────────────────────────────────────────────
+enum class Direction { SOUTH, NORTH, WEST, EAST }
+
+/** По delta движения определяем направление в изометрии. */
+fun directionFromDelta(dx: Int, dy: Int): Direction = when {
+    dx > 0 && dy == 0 -> Direction.EAST
+    dx < 0 && dy == 0 -> Direction.WEST
+    dy < 0            -> Direction.NORTH
+    else              -> Direction.SOUTH
+}
+
+/** Путь к спрайту по имени персонажа и направлению. */
+fun spritePath(charName: String, dir: Direction): String {
+    val base = when {
+        charName.contains("skull", ignoreCase = true) -> "sprites/enemy_skull"
+        charName.contains("red",   ignoreCase = true) -> "sprites/enemy_red"
+        charName.contains("ice",   ignoreCase = true) -> "sprites/hero_ice"
+        else -> "sprites/hero_white"
+    }
+    return "${base}_${dir.name.lowercase()}.png"
+}
+
 object SpriteCache {
     private val cache = HashMap<String, ImageBitmap?>()
 
@@ -179,18 +201,32 @@ fun IsoMapRenderer(
             val sx = cx + iso.x
             val sy = cy + iso.y
 
-            if (entity.id == gameState.player.id && playerFrontSheet != null) {
-                // Анимированный спрайт игрока
+            // Выбираем спрайт по направлению
+            val dir = entity.memory["direction"] as? Direction ?: Direction.SOUTH
+            val spriteKey = spritePath(
+                if (entity.id == gameState.player.id) "hero_white" else entity.name, dir
+            )
+            val sheet = SpriteCache.load(context, spriteKey)
+            val isPlayer = entity.id == gameState.player.id
+
+            if (sheet != null) {
+                val frameCount = when {
+                    isPlayer -> 45
+                    else -> 2
+                }
+                val frameW = sheet.width / frameCount
+                val frameH = sheet.height
+                val scale = if (isPlayer) 0.45f else 1f
                 drawSprite(
-                    sheet = playerFrontSheet,
-                    frameIndex = spriteFrame,
-                    frameW = 214, frameH = 297,
-                    screenX = sx - 107f,  // центрируем по горизонтали
-                    screenY = sy - 290f,  // ставим ноги на тайл
-                    scale = 0.45f,
+                    sheet = sheet,
+                    frameIndex = if (isPlayer) spriteFrame else (spriteFrame % 2),
+                    frameW = frameW, frameH = frameH,
+                    screenX = sx - frameW * scale / 2f,
+                    screenY = sy - frameH * scale * 0.95f,
+                    scale = scale,
                 )
             } else {
-                // Цветной прямоугольник-placeholder для NPC/врагов
+                // Fallback — цветной прямоугольник
                 val color = when {
                     entity.hasFlag("ENEMY") || entity.hasFlag("HOSTILE") -> Color(0xFFCC2222)
                     entity.hasFlag("PEASANT") || entity.hasFlag("VILLAGER") -> Color(0xFFDDCC55)
