@@ -1,15 +1,25 @@
 {
   "player": {
     "idle_front": { "file": "sprites/player_idle_front.png", "frameW": 214, "frameH": 297, "frames": 45, "fps": 12 },
-    "idle_back":  { "file": "sprites/player_idle_back.png",  "frameW": 245, "frameH": 309, "frames": 45, "fps": 12 }
+    "idle_back":  { "file": "sprites/player_idle_back.png",  "frameW": 245, "frameH": 309, "frames": 45, "fps": 12 },
+    "ice_front":  { "file": "sprites/hero_ice_front.png",    "frameW": 225, "frameH": 311, "frames": 35, "fps": 12 },
+    "ice_back":   { "file": "sprites/hero_ice_back.png",     "frameW": 259, "frameH": 306, "frames": 35, "fps": 12 }
   },
-  "entities": {
-    "knight":        { "file": "sprites/knight.png",        "frameW": 72,  "frameH": 120, "frames": 2,  "fps": 2  },
-    "mage":          { "file": "sprites/mage.png",          "frameW": 60,  "frameH": 120, "frames": 2,  "fps": 2  },
-    "skeleton_mage": { "file": "sprites/skeleton_mage.png", "frameW": 60,  "frameH": 120, "frames": 2,  "fps": 2  },
-    "skeleton_cpt":  { "file": "sprites/skeleton_cpt.png",  "frameW": 72,  "frameH": 118, "frames": 2,  "fps": 2  }
+  "enemies": {
+    "enemy_skull": { "file": "sprites/enemy_skull.png", "frameW": 171, "frameH": 120, "frames": 2, "fps": 2 },
+    "enemy_red":   { "file": "sprites/enemy_red.png",   "frameW": 179, "frameH": 120, "frames": 2, "fps": 2 },
+    "skeleton_mage": { "file": "sprites/skeleton_mage.png", "frameW": 60, "frameH": 120, "frames": 2, "fps": 2 },
+    "skeleton_cpt":  { "file": "sprites/skeleton_cpt.png",  "frameW": 72, "frameH": 118, "frames": 2, "fps": 2 }
+  },
+  "npc": {
+    "knight": { "file": "sprites/knight.png", "frameW": 72, "frameH": 120, "frames": 2, "fps": 2 },
+    "mage":   { "file": "sprites/mage.png",   "frameW": 60, "frameH": 120, "frames": 2, "fps": 2 }
   },
   "tilesets": {
     "trees": { "file": "sprites/tileset_trees.png", "tileW": 64, "tileH": 64 }
+  },
+  "backgrounds": {
+    "battle_plains": { "file": "backgrounds/battle_bg_1.jpg" },
+    "battle_desert": { "file": "backgrounds/battle_bg_2.jpg" }
   }
 }
