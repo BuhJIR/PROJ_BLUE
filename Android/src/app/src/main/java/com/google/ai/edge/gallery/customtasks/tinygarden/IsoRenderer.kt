@@ -162,8 +162,8 @@ fun IsoMapRenderer(
     // Камера — offset в экранных координатах, двигается тачем
     var camOffset by remember { mutableStateOf(Offset(0f, -200f)) }
     // Размер Canvas — нужен внутри pointerInput (там нет DrawScope.size)
-    var canvasW by remember { mutableFloatStateOf(0f) }
-    var canvasH by remember { mutableFloatStateOf(0f) }
+    var canvasW by remember { androidx.compose.runtime.mutableStateOf(0f) }
+    var canvasH by remember { androidx.compose.runtime.mutableStateOf(0f) }
 
     // Загружаем спрайты
     val spriteFrame by rememberSpriteFrame(45, fps = 12)
