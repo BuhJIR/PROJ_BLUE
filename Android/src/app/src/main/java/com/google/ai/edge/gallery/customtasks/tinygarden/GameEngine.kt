@@ -3,6 +3,11 @@ package com.google.ai.edge.gallery.customtasks.tinygarden
 import java.util.UUID
 import kotlin.math.sqrt
 import kotlin.math.abs
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 
 /**
  * Базовый класс для всего в мире.
@@ -102,6 +107,7 @@ data class GameState(
  * Работает на Dispatchers.Default — UI не блокируется.
  */
 class GameEngine {
+    private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
     private var state = GameState()
     private var onStateChanged: ((GameState) -> Unit)? = null
 
@@ -323,7 +329,7 @@ class GameEngine {
         onDone: (() -> Unit)? = null,
     ) {
         if (path.isEmpty()) { onDone?.invoke(); return }
-        kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.Default) {
+        scope.launch {
             var prevStep: Pathfinder.Step? = null
             path.forEach { step ->
                 val entity = if (entityId.equals(state.player.name, ignoreCase = true) ||
@@ -337,7 +343,7 @@ class GameEngine {
                     moveEntity(entityId, step.col - it.col, step.row - it.row)
                 }
                 prevStep = step
-                kotlinx.coroutines.delay(msPerStep)
+                delay(msPerStep)
             }
             clearSelection()
             onDone?.invoke()
