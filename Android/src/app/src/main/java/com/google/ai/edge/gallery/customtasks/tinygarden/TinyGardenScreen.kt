@@ -103,10 +103,10 @@ fun TinyGardenScreen(
 @Composable
 fun GameRenderer(
   gameState: GameState,
+  engine: GameEngine? = null,
   modifier: Modifier = Modifier,
 ) {
-  // Изометрический рендерер — OVERWORLD и BATTLE
-  IsoMapRenderer(gameState = gameState, modifier = modifier)
+  IsoMapRenderer(gameState = gameState, engine = engine, modifier = modifier)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -173,7 +173,8 @@ fun MainUi(
         Column(modifier = Modifier.weight(1f).fillMaxWidth().padding(16.dp)) {
           GameRenderer(
             gameState = uiState.gameState,
-            modifier = Modifier.fillMaxWidth().weight(1f).border(4.dp, Color.White, RoundedCornerShape(8.dp))
+            engine = viewModel.engine,
+            modifier = Modifier.fillMaxWidth().weight(1f).border(2.dp, Color(0xFF223344), RoundedCornerShape(4.dp))
           )
           Spacer(modifier = Modifier.height(16.dp))
           // Paginator logic
