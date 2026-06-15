@@ -5,7 +5,8 @@ import android.graphics.BitmapFactory
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.ui.input.pointer.awaitFirstDown
+import androidx.compose.ui.input.pointer.awaitPointerEvent
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -152,6 +153,7 @@ fun rememberSpriteFrame(totalFrames: Int, fps: Int = 12): State<Int> {
 @Composable
 fun IsoMapRenderer(
     gameState: GameState,
+    engine: GameEngine? = null,
     map: IsoMap = remember { generateTestMap() },
     modifier: Modifier = Modifier,
 ) {
@@ -169,11 +171,7 @@ fun IsoMapRenderer(
     Canvas(
         modifier = modifier
             .background(Color(0xFF1A1A2E))
-            .pointerInput(Unit) {
-                detectTransformGestures { _, pan, _, _ ->
-                    camOffset += pan
-                }
-            }
+    
     ) {
         val cx = size.width / 2f + camOffset.x
         val cy = size.height / 3f + camOffset.y
@@ -192,6 +190,42 @@ fun IsoMapRenderer(
             }
         }
 
+        // ── Подсветка пути ───────────────────────────────────────────────────
+        val pathSet = engine?.currentPath?.map { it.col to it.row }?.toSet() ?: emptySet()
+        val selected = engine?.selectedTile
+
+        pathSet.forEach { (col, row) ->
+            val iso = isoToScreen(col.toFloat(), row.toFloat())
+            val sx = cx + iso.x
+            val sy = cy + iso.y
+            // Подсвечиваем верхнюю грань тайла голубым
+            val pathPath = Path().apply {
+                moveTo(sx, sy - TILE_H2)
+                lineTo(sx + TILE_W2, sy)
+                lineTo(sx, sy + TILE_H2)
+                lineTo(sx - TILE_W2, sy)
+                close()
+            }
+            drawPath(pathPath, Color(0x5500CFFF))
+            drawPath(pathPath, Color(0xAA00CFFF), style = Stroke(width = 1.5f))
+        }
+
+        // Выбранный тайл — яркий контур
+        selected?.let { (col, row) ->
+            val iso = isoToScreen(col.toFloat(), row.toFloat())
+            val sx = cx + iso.x
+            val sy = cy + iso.y
+            val selPath = Path().apply {
+                moveTo(sx, sy - TILE_H2)
+                lineTo(sx + TILE_W2, sy)
+                lineTo(sx, sy + TILE_H2)
+                lineTo(sx - TILE_W2, sy)
+                close()
+            }
+            drawPath(selPath, Color(0x7700FFAA))
+            drawPath(selPath, Color(0xFFFFFFFF), style = Stroke(width = 2f))
+        }
+
         // ── Рисуем entity (сортировка по col+row для z-order) ────────────────
         val allEntities = gameState.entities.values.toList() + gameState.player
         val sorted = allEntities.sortedBy { it.col + it.row }
@@ -205,7 +239,7 @@ fun IsoMapRenderer(
             val dirStr = entity.memory["direction"] as? String ?: "SOUTH"
             val dir = try { Direction.valueOf(dirStr) } catch (e: Exception) { Direction.SOUTH }
             val spriteKey = spritePath(
-                if (entity.id == gameState.player.id) "hero_white" else entity.name, dir
+                if (entity.id == gameState.player.id) "sister_3" else entity.name, dir
             )
             val sheet = SpriteCache.load(context, spriteKey)
             val isPlayer = entity.id == gameState.player.id
