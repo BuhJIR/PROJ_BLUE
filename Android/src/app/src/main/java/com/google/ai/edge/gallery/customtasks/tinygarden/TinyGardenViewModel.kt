@@ -49,11 +49,11 @@ constructor(
   private val _isResettingConversation = MutableStateFlow(false)
   private val isResettingConversation = _isResettingConversation.asStateFlow()
 
-  val gameEngine = GameEngine()
-  val aiBridge = AiSoulBridge(gameEngine)
+  val engine = GameEngine()          // публичный — IsoMapRenderer берёт отсюда
+  val aiBridge = AiSoulBridge(engine)
 
   init {
-      gameEngine.observe { newState ->
+      engine.observe { newState ->
           _uiState.update { it.copy(gameState = newState) }
       }
   }
@@ -90,7 +90,7 @@ constructor(
         if (response.trim().startsWith("{") && response.trim().endsWith("}")) {
             aiBridge.processPureJson(response)
         } else {
-            gameEngine.logMessage("Soul: " + response)
+            engine.logMessage("Soul: " + response)
         }
 
         addMessage(message = ChatMessageText(content = response, side = ChatSide.AGENT))
