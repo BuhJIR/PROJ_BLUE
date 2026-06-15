@@ -288,4 +288,59 @@ class GameEngine {
     }
 
     fun currentState() = state
+
+    // ── Выбор тайла и построение пути ────────────────────────────────────────
+
+    var selectedTile: Pair<Int,Int>? = null
+        private set
+
+    var currentPath: List<Pathfinder.Step> = emptyList()
+        private set
+
+    fun selectTile(col: Int, row: Int, map: IsoMap) {
+        val blocked = state.entities.values.map { it.col to it.row }.toSet()
+        val path = Pathfinder.findPath(
+            state.player.col, state.player.row,
+            col, row, map, blocked
+        )
+        selectedTile = col to row
+        currentPath = path ?: emptyList()
+        updateState { this }
+    }
+
+    fun clearSelection() {
+        selectedTile = null
+        currentPath = emptyList()
+        updateState { this }
+    }
+
+    // ── Анимированное перемещение по пути ────────────────────────────────────
+
+    fun executePath(
+        entityId: String,
+        path: List<Pathfinder.Step>,
+        msPerStep: Long = 180L,
+        onDone: (() -> Unit)? = null,
+    ) {
+        if (path.isEmpty()) { onDone?.invoke(); return }
+        kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.Default) {
+            var prevStep: Pathfinder.Step? = null
+            path.forEach { step ->
+                val entity = if (entityId.equals(state.player.name, ignoreCase = true) ||
+                                 entityId == state.player.id) state.player
+                             else state.entities.values.firstOrNull {
+                                 it.name.equals(entityId, ignoreCase = true) || it.id == entityId
+                             }
+                entity?.let {
+                    val dir = prevStep?.let { p -> Pathfinder.stepDirection(p, step) } ?: "SOUTH"
+                    it.memory["direction"] = dir
+                    moveEntity(entityId, step.col - it.col, step.row - it.row)
+                }
+                prevStep = step
+                kotlinx.coroutines.delay(msPerStep)
+            }
+            clearSelection()
+            onDone?.invoke()
+        }
+    }
 }
