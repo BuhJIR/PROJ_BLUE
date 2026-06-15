@@ -163,15 +163,47 @@ fun IsoMapRenderer(
     var camOffset by remember { mutableStateOf(Offset(0f, -200f)) }
 
     // Загружаем спрайты
-    val playerFrontSheet = remember { SpriteCache.load(context, "sprites/player_idle_front.png") }
     val spriteFrame by rememberSpriteFrame(45, fps = 12)
 
     val textMeasurer = rememberTextMeasurer()
 
+    val onTileClick: (Int, Int) -> Unit = { col, row ->
+        engine?.selectTile(col, row, map)
+    }
+
     Canvas(
         modifier = modifier
             .background(Color(0xFF1A1A2E))
-    
+            .pointerInput(Unit) {
+                val TAP_SLOP = 12f
+                awaitPointerEventScope {
+                    while (true) {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        val startPos = down.position
+                        var totalDrag = 0f
+                        var lastPos = startPos
+                        var isDragging = false
+                        do {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull() ?: break
+                            val delta = change.position - lastPos
+                            val dist = kotlin.math.sqrt(delta.x * delta.x + delta.y * delta.y)
+                            totalDrag += dist
+                            if (totalDrag > TAP_SLOP) isDragging = true
+                            if (isDragging) { camOffset += delta; change.consume() }
+                            lastPos = change.position
+                        } while (event.changes.any { it.pressed })
+                        if (!isDragging) {
+                            val cx2 = size.width / 2f + camOffset.x
+                            val cy2 = size.height / 3f + camOffset.y
+                            val sx = startPos.x - cx2
+                            val sy = startPos.y - cy2
+                            val (col, row) = screenToIso(sx, sy)
+                            onTileClick(col, row)
+                        }
+                    }
+                }
+            }
     ) {
         val cx = size.width / 2f + camOffset.x
         val cy = size.height / 3f + camOffset.y
