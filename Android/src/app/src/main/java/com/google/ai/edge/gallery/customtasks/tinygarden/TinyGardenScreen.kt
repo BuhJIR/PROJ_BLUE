@@ -176,7 +176,52 @@ fun MainUi(
             engine = viewModel.engine,
             modifier = Modifier.fillMaxWidth().weight(1f).border(2.dp, Color(0xFF223344), RoundedCornerShape(4.dp))
           )
-          Spacer(modifier = Modifier.height(16.dp))
+          Spacer(modifier = Modifier.height(8.dp))
+
+          // ── Кнопка [Идти] — появляется когда путь выбран ──────────────────
+          val path = viewModel.engine.currentPath
+          val selectedTile = viewModel.engine.selectedTile
+          if (path.isNotEmpty() && selectedTile != null) {
+            androidx.compose.foundation.layout.Row(
+              modifier = Modifier.fillMaxWidth(),
+              horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+              Button(
+                onClick = {
+                  val dest = selectedTile
+                  val pathCopy = path.toList()
+                  viewModel.engine.executePath(
+                    entityId = viewModel.engine.currentState().player.name,
+                    path = pathCopy,
+                    msPerStep = 160L,
+                    onDone = {
+                      // После хода — сообщаем Душе
+                      val msg = "Герой прибыл в клетку (${dest.first}, ${dest.second})."
+                      viewModel.addPlayerMessage(msg)
+                      viewModel.getCommand(
+                        model = model,
+                        instructionText = msg,
+                        onDone = {},
+                        onError = {},
+                      )
+                    }
+                  )
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF005588)),
+                modifier = Modifier.weight(1f),
+              ) {
+                Text("⚡ Идти", color = Color.White)
+              }
+              OutlinedButton(
+                onClick = { viewModel.engine.clearSelection() },
+                modifier = Modifier.weight(1f),
+              ) {
+                Text("✕ Отмена")
+              }
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+          }
+
           // Paginator logic
           var logOffset by remember { mutableIntStateOf(0) }
           val logs = uiState.gameState.battleLog
