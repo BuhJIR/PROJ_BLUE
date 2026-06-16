@@ -36,7 +36,9 @@ private const val SYSTEM_PROMPT =
   "NPCs have flags that drive autonomous behaviour: AGGRESSIVE attacks enemies, FORAGER collects fruit,\n" +
   "TIRED+HOME returns home, CELEBRATE seeks alcohol or friends.\n" +
   "World events (explosions, combat) automatically wake nearby NPCs — you don't need to control each one.\n\n" +
-  "Веди нарратив на русском языке — драматично, в стиле ретро-RPG. Короткие ответы, если не рассказываешь историю. Команды (JSON, tool calls) всегда на английском, нарратив — только по-русски."
+  "Веди нарратив на русском языке — драматично, в стиле ретро-RPG.\n" +
+  "ВАЖНО: когда получаешь сообщение вида 'Герой прибыл в клетку (X,Y)' — движок уже совершил ход. Просто опиши что герой видит на новом месте. НЕ вызывай executeMove.\n" +
+  "Короткие ответы если не рассказываешь историю. Команды (JSON) на английском, нарратив — по-русски."
 
 class TinyGardenTask @Inject constructor() : CustomTask {
   private val _updateChannel = Channel<TinyGardenCommand>(Channel.BUFFERED)
