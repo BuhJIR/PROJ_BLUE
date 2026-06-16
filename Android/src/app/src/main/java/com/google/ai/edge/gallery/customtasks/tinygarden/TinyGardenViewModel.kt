@@ -103,6 +103,11 @@ constructor(
     }
   }
 
+  /** Добавить сообщение игрока в историю без отправки модели. */
+  fun addPlayerMessage(text: String) {
+    addMessage(message = ChatMessageText(content = text, side = ChatSide.USER))
+  }
+
   fun addMessage(message: ChatMessage) {
     val newMessages = _uiState.value.messages.toMutableList()
     newMessages.add(message)
