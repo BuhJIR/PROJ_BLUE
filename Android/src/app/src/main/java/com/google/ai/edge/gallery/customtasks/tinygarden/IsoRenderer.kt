@@ -5,8 +5,8 @@ import android.graphics.BitmapFactory
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.ui.input.pointer.awaitFirstDown
-import androidx.compose.ui.input.pointer.awaitPointerEvent
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -23,6 +23,7 @@ import androidx.compose.runtime.withFrameMillis
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import kotlin.math.roundToInt
+import kotlin.math.sqrt
 
 // ── Изометрические константы ─────────────────────────────────────────────────
 const val TILE_W = 94f          // ширина ромба
@@ -162,8 +163,7 @@ fun IsoMapRenderer(
     // Камера — offset в экранных координатах, двигается тачем
     var camOffset by remember { mutableStateOf(Offset(0f, -200f)) }
     // Размер Canvas — нужен внутри pointerInput (там нет DrawScope.size)
-    var canvasW by remember { androidx.compose.runtime.mutableStateOf(0f) }
-    var canvasH by remember { androidx.compose.runtime.mutableStateOf(0f) }
+
 
     // Загружаем спрайты
     val spriteFrame by rememberSpriteFrame(45, fps = 12)
@@ -177,40 +177,24 @@ fun IsoMapRenderer(
     Canvas(
         modifier = modifier
             .background(Color(0xFF1A1A2E))
+            // Пан — двигаем камеру
             .pointerInput(Unit) {
-                val TAP_SLOP = 12f
-                awaitPointerEventScope {
-                    while (true) {
-                        val down = awaitFirstDown(requireUnconsumed = false)
-                        val startPos = down.position
-                        var totalDrag = 0f
-                        var lastPos = startPos
-                        var isDragging = false
-                        do {
-                            val event = awaitPointerEvent()
-                            val change = event.changes.firstOrNull() ?: break
-                            val delta = change.position - lastPos
-                            val dist = kotlin.math.sqrt(delta.x * delta.x + delta.y * delta.y)
-                            totalDrag += dist
-                            if (totalDrag > TAP_SLOP) isDragging = true
-                            if (isDragging) { camOffset += delta; change.consume() }
-                            lastPos = change.position
-                        } while (event.changes.any { it.pressed })
-                        if (!isDragging) {
-                            val cx2 = canvasW / 2f + camOffset.x
-                            val cy2 = canvasH / 3f + camOffset.y
-                            val sx = startPos.x - cx2
-                            val sy = startPos.y - cy2
-                            val (col, row) = screenToIso(sx, sy)
-                            onTileClick(col, row)
-                        }
-                    }
+                detectDragGestures { _, dragAmount ->
+                    camOffset += dragAmount
+                }
+            }
+            // Тап — выбор тайла (используем size через замыкание из BoxWithConstraints)
+            .pointerInput(onTileClick) {
+                detectTapGestures { tapOffset ->
+                    val cx2 = size.width / 2f + camOffset.x
+                    val cy2 = size.height / 3f + camOffset.y
+                    val sx = tapOffset.x - cx2
+                    val sy = tapOffset.y - cy2
+                    val (col, row) = screenToIso(sx, sy)
+                    onTileClick(col, row)
                 }
             }
     ) {
-        // Запоминаем размер для pointerInput
-        canvasW = size.width
-        canvasH = size.height
         val cx = size.width / 2f + camOffset.x
         val cy = size.height / 3f + camOffset.y
 
