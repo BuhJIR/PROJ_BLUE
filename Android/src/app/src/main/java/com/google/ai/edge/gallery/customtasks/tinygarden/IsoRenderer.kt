@@ -76,27 +76,32 @@ val TILE_COLORS_SHADOW = mapOf(
 
 // ── Карта ─────────────────────────────────────────────────────────────────────
 data class IsoMap(
-    val cols: Int = 16,
-    val rows: Int = 16,
-    val tiles: Array<Array<TileType>> = Array(16) { Array(16) { TileType.GRASS } },
+    val cols: Int = 24,
+    val rows: Int = 24,
+    val tiles: Array<Array<TileType>> = Array(24) { Array(24) { TileType.GRASS } },
 ) {
     fun tileAt(col: Int, row: Int): TileType =
         if (col in 0 until cols && row in 0 until rows) tiles[row][col] else TileType.VOID
 }
 
-/** Генерация тестовой карты. */
-fun generateTestMap(): IsoMap {
-    val tiles = Array(16) { r -> Array(16) { c ->
+/** Procedural landscape с Perlin-подобным шумом на seed. */
+fun generateProceduralLandscape(seed: Long = 14159265358979323L, cols: Int = 24, rows: Int = 24): IsoMap {
+    val random = java.util.Random(seed)
+    val tiles = Array(rows) { r -> Array(cols) { c ->
+        val noise = (Math.sin(r * 0.3 + seed) * 0.5 + Math.cos(c * 0.25) * 0.5 + random.nextFloat() * 0.4).toFloat()
         when {
-            r == 0 || r == 15 || c == 0 || c == 15 -> TileType.STONE // стены
-            r in 6..9 && c in 6..9 -> TileType.WATER  // пруд в центре
-            r % 5 == 0 && c % 5 == 0 -> TileType.DIRT  // грязные пятна
-            (r + c) % 7 == 0 -> TileType.WOOD           // деревянные тропы
+            r < 3 || r > rows-4 || c < 3 || c > cols-4 -> TileType.STONE  // measurable границы
+            noise > 1.05 -> TileType.WATER     // озёра
+            noise > 0.65 -> TileType.DIRT      // тропы
+            noise > 0.15 && (r + c) % 4 == 0 -> TileType.WOOD  // деревянные акценты
             else -> TileType.GRASS
         }
     }}
-    return IsoMap(tiles = tiles)
+    return IsoMap(cols = cols, rows = rows, tiles = tiles)
 }
+
+/** Legacy тестовая карта. */
+fun generateTestMap(): IsoMap = generateProceduralLandscape(42L)
 
 // ── Sprite loader ─────────────────────────────────────────────────────────────
 // ── Направления движения ────────────────────────────────────────────────────
@@ -155,7 +160,7 @@ fun rememberSpriteFrame(totalFrames: Int, fps: Int = 12): State<Int> {
 fun IsoMapRenderer(
     gameState: GameState,
     engine: GameEngine? = null,
-    map: IsoMap = remember { generateTestMap() },
+    map: IsoMap = remember { generateProceduralLandscape() },
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
