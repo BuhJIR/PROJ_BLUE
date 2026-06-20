@@ -49,8 +49,7 @@ object Pathfinder {
             for ((dc, dr) in dirs) {
                 val next = Step(cur.col + dc, cur.row + dr)
                 if (next in visited) continue
-                if (map.tileAt(next.col, next.row) == TileType.VOID) continue
-                if (map.tileAt(next.col, next.row) == TileType.WATER) continue
+                if (!map.isWalkable(next.col, next.row)) continue
                 if (Pair(next.col, next.row) in blockedCells) continue
                 visited.add(next)
                 parent[next] = cur
