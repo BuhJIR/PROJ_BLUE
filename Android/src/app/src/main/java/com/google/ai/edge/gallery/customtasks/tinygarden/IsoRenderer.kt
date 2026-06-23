@@ -287,15 +287,18 @@ fun IsoMapRenderer(
                 val frameH     = sheet.height
                 val scale      = if (isPlayer) 0.45f else 1f
                 val fi         = if (isPlayer) spriteFrame else (spriteFrame % 2)
-                // ── Правильный drawSprite: translate ПЕРВЫМ, потом scale ──────
-                translate(sx - frameW * scale / 2f, sy - frameH * scale * 0.95f) {
-                    scale(scale, scale, pivot = Offset.Zero) {
+                val srcLeft    = fi * frameW
+                if (srcLeft + frameW <= sheet.width) {
+                    withTransform({
+                        translate(sx - frameW * scale / 2f, sy - frameH * scale * 0.95f)
+                        scale(scale, scale, pivot = Offset.Zero)
+                    }) {
                         drawImage(
-                            image       = sheet,
-                            srcOffset   = IntOffset(fi * frameW, 0),
-                            srcSize     = IntSize(frameW, frameH),
-                            dstOffset   = IntOffset.Zero,
-                            dstSize     = IntSize(frameW, frameH),
+                            image         = sheet,
+                            srcOffset     = IntOffset(srcLeft, 0),
+                            srcSize       = IntSize(frameW, frameH),
+                            dstOffset     = IntOffset.Zero,
+                            dstSize       = IntSize(frameW, frameH),
                             filterQuality = FilterQuality.None,
                         )
                     }
