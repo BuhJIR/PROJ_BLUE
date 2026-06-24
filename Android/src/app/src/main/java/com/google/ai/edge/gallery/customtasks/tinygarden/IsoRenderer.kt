@@ -287,22 +287,10 @@ fun IsoMapRenderer(
                 val frameH     = sheet.height
                 val scale      = if (isPlayer) 0.45f else 1f
                 val fi         = if (isPlayer) spriteFrame else (spriteFrame % 2)
-                val srcLeft    = fi * frameW
-                if (srcLeft + frameW <= sheet.width) {
-                    withTransform({
-                        translate(sx - frameW * scale / 2f, sy - frameH * scale * 0.95f)
-                        scale(scale, scale, pivot = Offset.Zero)
-                    }) {
-                        drawImage(
-                            image         = sheet,
-                            srcOffset     = IntOffset(srcLeft, 0),
-                            srcSize       = IntSize(frameW, frameH),
-                            dstOffset     = IntOffset.Zero,
-                            dstSize       = IntSize(frameW, frameH),
-                            filterQuality = FilterQuality.None,
-                        )
-                    }
-                }
+                // Позиция фиксирована — не зависит от frameW (не плавает при смене кадров)
+                val screenX    = sx - frameW * scale / 2f
+                val screenY    = sy - frameH * scale
+                drawSprite(sheet, fi, frameW, frameH, screenX, screenY, scale)
             } else {
                 val color = when {
                     isPlayer               -> Color(0xFF44AAFF)
@@ -316,6 +304,31 @@ fun IsoMapRenderer(
 
             if (entity.maxHp > 0) drawSegmentedHpBar(sx, sy - 64f, entity.hp, entity.maxHp)
         }
+    }
+}
+
+// ── drawSprite — точная копия из первой рабочей версии (cab0e549) ─────────────
+fun DrawScope.drawSprite(
+    sheet: ImageBitmap,
+    frameIndex: Int,
+    frameW: Int, frameH: Int,
+    screenX: Float, screenY: Float,
+    scale: Float = 1f,
+) {
+    val srcLeft = frameIndex * frameW
+    if (srcLeft + frameW > sheet.width) return
+    withTransform({
+        translate(screenX, screenY)
+        scale(scale, scale, pivot = Offset.Zero)
+    }) {
+        drawImage(
+            image         = sheet,
+            srcOffset     = IntOffset(srcLeft, 0),
+            srcSize       = IntSize(frameW, frameH),
+            dstOffset     = IntOffset.Zero,
+            dstSize       = IntSize(frameW, frameH),
+            filterQuality = FilterQuality.None,
+        )
     }
 }
 
