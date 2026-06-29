@@ -106,19 +106,45 @@ Or download the latest artefact from [**Actions**](https://github.com/BuhJIR/PRO
 
 ---
 
-## Status
+## Development Status
 
+#### Engine & World
 ```
-✓ Isometric renderer with tile height
-✓ Procedural world (single seed, effectively infinite)
-✓ 6 characters × 4 directions (pixel-art sprites)
-✓ On-device LLM Game Master (narrative in Russian)
-✓ Event-driven NPC behaviour (flags, needs, memory)
-✓ BFS pathfinding + L-shaped path + animated movement
-◐ Combat system
-◐ Dice mechanics (d6)
-○ Main menu
-○ Audio
+✓ Isometric renderer with per-tile height (0–4)
+✓ Procedural world generation (single deterministic seed)
+✓ Infinite world buffer — regenerates around the player
+✓ 4-directional pixel-art sprite system
+✓ Sprite sheet validation (integer frame width, zero drift)
+✓ Event-driven NPC behaviour (flags, needs, memory, groups)
+✓ Spatial hash — O(1) proximity queries at any scale
+✓ BFS pathfinding with L-shaped movement beautification
+✓ Animated step-by-step path execution
+✓ On-device LLM Game Master with tool calling
+```
+
+#### In Progress
+```
+◐ Combat system — turn order, action resolution
+◐ Dice mechanics — d6 face assignment, world casting
+◐ Enemy AI — threat response, patrol, engagement radius
+◐ Main menu (PS1 aesthetic)
+```
+
+#### Planned
+```
+○ Enemy catalogue — unique flags, behaviours, loot tables
+○ Fauna — passive creatures, aggro radius, flee logic
+○ Flora — harvestable, seasonal, reactive to world events
+○ Structures — buildings, interiors, destructible elements
+○ Caves & dungeons — procedural underground layers
+○ Inventory & crafting system
+○ Companion system — Sisters as active party members
+○ Dialogue tree — branching, memory-aware, Soul-driven
+○ Status effects — poison, fatigue, fear, blessing
+○ Day/night cycle with behaviour shifts
+○ Weather system affecting tile traversal and NPC mood
+○ Save & load — world state serialisation
+○ Audio — ambient, combat, narrative cues
 ```
 
 ---
