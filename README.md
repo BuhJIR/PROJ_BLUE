@@ -108,44 +108,51 @@ Or download the latest artefact from [**Actions**](https://github.com/BuhJIR/PRO
 
 ## Development Status
 
-#### Engine & World
-```
-✓ Isometric renderer with per-tile height (0–4)
-✓ Procedural world generation (single deterministic seed)
-✓ Infinite world buffer — regenerates around the player
-✓ 4-directional pixel-art sprite system
-✓ Sprite sheet validation (integer frame width, zero drift)
-✓ Event-driven NPC behaviour (flags, needs, memory, groups)
-✓ Spatial hash — O(1) proximity queries at any scale
-✓ BFS pathfinding with L-shaped movement beautification
-✓ Animated step-by-step path execution
-✓ On-device LLM Game Master with tool calling
-```
+#### ✓ Complete
 
-#### In Progress
-```
-◐ Combat system — turn order, action resolution
-◐ Dice mechanics — d6 face assignment, world casting
-◐ Enemy AI — threat response, patrol, engagement radius
-◐ Main menu (PS1 aesthetic)
-```
+The isometric renderer draws a procedurally generated world from a single deterministic seed — the same coordinates always produce the same terrain. Tiles carry individual height values, casting proper side faces and lifting sprites above the ground plane. The world buffer silently regenerates around the player as they move, with no visible seam.
 
-#### Planned
-```
-○ Enemy catalogue — unique flags, behaviours, loot tables
-○ Fauna — passive creatures, aggro radius, flee logic
-○ Flora — harvestable, seasonal, reactive to world events
-○ Structures — buildings, interiors, destructible elements
-○ Caves & dungeons — procedural underground layers
-○ Inventory & crafting system
-○ Companion system — Sisters as active party members
-○ Dialogue tree — branching, memory-aware, Soul-driven
-○ Status effects — poison, fatigue, fear, blessing
-○ Day/night cycle with behaviour shifts
-○ Weather system affecting tile traversal and NPC mood
-○ Save & load — world state serialisation
-○ Audio — ambient, combat, narrative cues
-```
+Six playable characters are implemented, each with four directional sprite sheets hand-validated for zero frame drift. The on-device language model acts as Game Master — it narrates in full sentences, spawns entities, modifies world state, and responds to player actions through a structured tool-calling interface, all without a network connection.
+
+NPC behaviour runs on a flag automaton: entities wake in response to world events, consult their needs and memory, and choose actions deterministically. A spatial hash ensures proximity queries remain O(1) regardless of world population. Pathfinding uses 4-way BFS with an L-shaped beautification pass, and the engine walks the resulting path frame by frame with directional sprite switching.
+
+---
+
+#### ◐ In Progress
+
+**Combat.** The turn structure and action resolution are being designed around the dice system — each roll is not merely a number but a question of which Sister acts and on whose behalf.
+
+**The Dice.** A d6 face carries a Sister, a spell, or is left blank — the player assembles the die before entering a situation. Casting it into the world tile-by-tile is a mechanic still being built.
+
+**Main Menu.** A PS1-era title screen is partially implemented, awaiting integration as the application entry point.
+
+---
+
+#### ○ Planned
+
+**Enemies.** Each enemy type will carry a distinct flag set that governs not just combat but daily routine — a skeleton patrol that genuinely has somewhere to be, and stops patrolling only when it finds you.
+
+**Fauna.** Passive creatures with aggro radii and flee responses, woven into the event system. A rabbit bolting from a loud footstep is the same mechanism as a guard responding to a threat.
+
+**Flora.** Plants that can be harvested, that grow back over time, and that Three in particular notices before anyone else does.
+
+**Structures.** Buildings with traversable interiors, destructible elements, and ownership flags that determine how NPCs respond to your presence inside them.
+
+**Caves & Dungeons.** Procedurally generated underground layers with their own seed offset — darker tile palette, restricted light radius, and encounters that scale with depth.
+
+**Companions.** The Sisters are not decorative. Each one will join the party as an active member, contribute her principle to every roll, and disagree with you when the situation calls for it.
+
+**Dialogue Trees.** Memory-aware branching conversations driven by the Soul — what you did three sessions ago may surface in what an NPC says today.
+
+**Status Effects.** Poison, fatigue, fear, and blessing as first-class flag states, visible on the segmented HP bar and legible to the language model.
+
+**Day / Night Cycle.** Behaviour shifts at dusk — merchants close, predators emerge, certain flags activate only in darkness.
+
+**Weather.** Rain slows movement on dirt tiles. Fog narrows the interest radius of every entity on the map. Snow changes the tile palette and freezes shallow water.
+
+**Save System.** Full world-state serialisation including entity memory, flag state, and the Soul's conversation history.
+
+**Audio.** Ambient layers, positional combat sounds, and narrative cues triggered by the Soul mid-sentence.
 
 ---
 
