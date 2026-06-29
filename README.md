@@ -1,45 +1,45 @@
 # PROJ☆BLUE
 
-[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+[![Licence](https://img.shields.io/badge/Licence-Apache%202.0-blue.svg)](LICENSE)
 [![Build](https://github.com/BuhJIR/PROJ_BLUE/actions/workflows/build_android.yaml/badge.svg)](https://github.com/BuhJIR/PROJ_BLUE/actions)
 
-**Edge AI · Isometric JRPG · On-device LLM Game Master**
+**Edge AI · Isometric RPG · On-device LLM Game Master**
 
-PROJ☆BLUE — изометрическая RPG на Android, где Мастером игры является локальная языковая модель Gemma, запущенная прямо на устройстве. Никаких серверов. Никаких облаков. Мир живёт внутри твоего телефона.
-
----
-
-## Концепция
-
-Пошаговая тактическая RPG с живым нарративом. Каждый NPC существует автономно — управляется флагами и нуждами, а не скриптами. Мир реагирует на события волнами — взрыв будит всех в радиусе, угроза поднимает охрану, праздник меняет поведение целых групп.
-
-Языковая модель — не чат-бот. Она описывает мир, создаёт события, управляет существами через систему инструментов. Игрок и модель взаимодействуют через общее игровое пространство.
+PROJ☆BLUE is an isometric RPG for Android in which the Game Master is a local Gemma language model running entirely on-device. No servers. No cloud. The world lives inside your phone.
 
 ---
 
-## Архитектура
+## Concept
+
+A turn-based tactical RPG with a living narrative. Every NPC exists autonomously — driven by flags and needs, not scripts. The world responds to events in waves: an explosion wakes everyone within range, a threat raises the guards, a festival shifts the behaviour of entire groups.
+
+The language model is not a chatbot. It describes the world, creates events, and commands entities through a tool-calling interface. The player and the model interact through a shared game space.
+
+---
+
+## Architecture
 
 ```
 ┌─────────────────────────────────────────┐
-│           PROJ☆BLUE                     │
+│              PROJ☆BLUE                  │
 ├─────────────────────────────────────────┤
 │  Gemma (on-device LLM)                  │
-│  └── Game Master "Душа"                 │
-│       ├── Нарратив (русский)            │
+│  └── Game Master "the Soul"             │
+│       ├── Narrative                     │
 │       ├── Tool Calling → GameEngine     │
 │       └── Pure JSON commands            │
 ├─────────────────────────────────────────┤
 │  GameEngine                             │
-│  ├── SpatialHash — O(1) queries         │
-│  ├── EventBus — stimulus/response       │
+│  ├── SpatialHash   — O(1) queries       │
+│  ├── EventBus      — stimulus/response  │
 │  ├── BehaviourDecider — flag automaton  │
-│  ├── Pathfinder — 4-way BFS + L-shape   │
-│  └── executePath — animated movement    │
+│  ├── Pathfinder    — 4-way BFS + L-path │
+│  └── executePath   — animated movement  │
 ├─────────────────────────────────────────┤
 │  IsoRenderer (Compose Canvas)           │
 │  ├── Procedural world (single seed)     │
-│  ├── Layered tiles with height 0-4      │
-│  ├── 4-directional sprites              │
+│  ├── Layered tiles with height 0–4      │
+│  ├── 4-directional pixel-art sprites    │
 │  ├── Path highlight                     │
 │  └── Segmented HP bars                  │
 └─────────────────────────────────────────┘
@@ -47,52 +47,54 @@ PROJ☆BLUE — изометрическая RPG на Android, где Масте
 
 ---
 
-## Шесть Сестёр
+## The Six Sisters
 
-Кубик d6 — не рандом. Онтология мира.  
-Каждая грань — принцип реальности, воплощённый в персонажа.
+The d6 die is not a randomiser. It is the ontology of the world.  
+Each face is a principle of reality made manifest.
 
-| # | Имя | Принцип |
-|---|-----|---------|
-| ⚀ | **One** | Эго, расчёт |
-| ⚁ | **Two** | Кооперация, теория игр |
-| ⚂ | **Three** | Гармония, природа |
-| ⚃ | **Four** | Жертвенность, хаос |
-| ⚄ | **Five** | Созидание, смерть |
-| ⚅ | **Six** | Выбор, дуальность, время |
+| # | Name | Principle |
+|---|------|-----------|
+| ⚀ | **One** | Ego, calculation |
+| ⚁ | **Two** | Co-operation, game theory |
+| ⚂ | **Three** | Harmony, nature |
+| ⚃ | **Four** | Sacrifice, chaos |
+| ⚄ | **Five** | Creation, death |
+| ⚅ | **Six** | Choice, duality, spacetime |
 
-Грань кубика определяет кто говорит в диалоге, кто атакует в бою, что происходит при броске в мир.
+The face that lands determines who speaks in dialogue, who strikes in combat, and what stirs in the world when the die is cast upon it.
 
 ---
 
-## Мир живёт сам
+## The World Lives on Its Own
 
 ```kotlin
-// Группа NPC меняет поведение одной командой
+// An entire group changes behaviour in one call
 engine.bulkFlag(
     matchFlags = listOf("GOBLIN", "PEASANT"),
     removeGroup = "WORK",
-    addFlags = listOf("CELEBRATE")
+    addFlags    = listOf("CELEBRATE")
 )
-// EventBus рассылает волну → все в радиусе реагируют
-// FORAGER ищет еду, SOCIAL ищет компанию
+// EventBus propagates a wave → all entities within range react
+// FORAGER seeks food, SOCIAL seeks company
 ```
 
 ---
 
-## Техническая база
+## Technical Foundation
 
-- **Основа:** [Google AI Edge Gallery](https://github.com/google-ai-edge/gallery)
-- **Package:** `com.google.ai.edge.gallery` — системные привилегии, Vulkan GPU scheduling
-- **LLM:** Gemma (on-device, полностью офлайн)
-- **UI:** Jetpack Compose + Canvas
-- **Inference:** LiteRT / MediaPipe Tasks
-- **DI:** Hilt
-- **Build:** GitHub Actions → APK artifact
+| | |
+|---|---|
+| **Base** | [Google AI Edge Gallery](https://github.com/google-ai-edge/gallery) |
+| **Package** | `com.google.ai.edge.gallery` — system privileges, Vulkan GPU scheduling |
+| **LLM** | Gemma — fully offline, on-device |
+| **UI** | Jetpack Compose + Canvas (isometric renderer) |
+| **Inference** | LiteRT / MediaPipe Tasks |
+| **DI** | Hilt |
+| **CI** | GitHub Actions → APK artefact |
 
 ---
 
-## Сборка
+## Building
 
 ```bash
 git clone https://github.com/BuhJIR/PROJ_BLUE.git
@@ -100,27 +102,27 @@ cd PROJ_BLUE/Android/src
 ./gradlew assembleDebug
 ```
 
-Или скачать из [**Actions → последний успешный билд**](https://github.com/BuhJIR/PROJ_BLUE/actions).
+Or download the latest artefact from [**Actions**](https://github.com/BuhJIR/PROJ_BLUE/actions).
 
 ---
 
-## Статус
+## Status
 
 ```
-✓ Изометрический рендерер с высотами
-✓ Процедурный мир (единый seed, бесконечный)
-✓ 6 персонажей × 4 направления (пиксельарт спрайты)
-✓ On-device LLM Game Master (русский нарратив)
-✓ Event-driven NPC поведение (флаги, нужды, память)
-✓ BFS pathfinding + L-образный путь + анимация
-◐ Боевая система
-◐ Механика кубиков
-○ Главное меню
-○ Звук
+✓ Isometric renderer with tile height
+✓ Procedural world (single seed, effectively infinite)
+✓ 6 characters × 4 directions (pixel-art sprites)
+✓ On-device LLM Game Master (narrative in Russian)
+✓ Event-driven NPC behaviour (flags, needs, memory)
+✓ BFS pathfinding + L-shaped path + animated movement
+◐ Combat system
+◐ Dice mechanics (d6)
+○ Main menu
+○ Audio
 ```
 
 ---
 
-*"Запах сырой земли и гниющего мяса висит в воздухе.  
-Слышен глухой скрежет, будто что-то тяжёлое волокут по камню."*
+*"The smell of damp earth and rotting flesh hangs in the air.  
+A low grinding sound — as though something heavy is being dragged across stone."*
 
