@@ -295,6 +295,17 @@ class GameEngine {
 
     fun currentState() = state
 
+    // ── Структуры (зиккураты, здания) от StructureDSL ─────────────────────────
+    val structureOverrides = HashMap<Pair<Int,Int>, LayeredTileEx>()
+
+    fun applyStructure(tiles: List<Triple<Int, Int, LayeredTileEx>>) {
+        tiles.forEach { (c, r, t) -> structureOverrides[c to r] = t }
+        logMessage("A structure rises from the ground — ${tiles.size} tiles reshaped.")
+        updateState { this }
+    }
+
+    fun structureTileAt(col: Int, row: Int): LayeredTileEx? = structureOverrides[col to row]
+
     // ── Выбор тайла и построение пути ────────────────────────────────────────
 
     var selectedTile: Pair<Int,Int>? = null
