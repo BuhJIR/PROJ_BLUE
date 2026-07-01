@@ -242,7 +242,9 @@ fun IsoMapRenderer(
             for (lc in 0 until liveMap.cols) {
                 val wc = lc + wStartC
                 val wr = lr + wStartR
-                val lt = liveMap.tiles[lr][lc]
+                val override = engine?.structureTileAt(wc, wr)
+                val lt = if (override != null) LayeredTile(override.base, override.height)
+                         else liveMap.tiles[lr][lc]
                 val iso = isoToScreen(wc.toFloat(), wr.toFloat(), lt.height.toFloat())
                 val sx = cx + iso.x
                 val sy = cy + iso.y
@@ -252,6 +254,11 @@ fun IsoMapRenderer(
                 if (sy < -TILE_H * 6 || sy > size.height + TILE_H * 6) continue
 
                 drawIsoTile(sx, sy, lt.base, lt.height)
+
+                // Ступень — диагональный переход внутри клетки
+                engine?.structureTileAt(wc, wr)?.stair?.let { stair ->
+                    drawStairOverlay(sx, sy, stair, lt.base)
+                }
 
                 if (wc to wr in pathSet) {
                     val p = isoRhombus(sx, sy)
@@ -339,6 +346,24 @@ fun isoRhombus(cx: Float, cy: Float): Path = Path().apply {
     lineTo(cx,           cy + TILE_H2)
     lineTo(cx - TILE_W2, cy)
     close()
+}
+
+fun DrawScope.drawStairOverlay(cx: Float, cy: Float, stair: StairInfo, material: TileType) {
+    val stepCount = 4
+    val stepH = TILE_LIFT / stepCount
+    val col = TILE_LEFT[material] ?: Color.Gray
+    for (i in 0 until stepCount) {
+        val t = i.toFloat() / stepCount
+        val stepY = cy - t * (TILE_H2 * 0.6f)
+        val stepPath = Path().apply {
+            moveTo(cx - TILE_W2 * (1 - t) * 0.5f, stepY)
+            lineTo(cx + TILE_W2 * (1 - t) * 0.5f, stepY)
+            lineTo(cx + TILE_W2 * (1 - t) * 0.5f, stepY + stepH)
+            lineTo(cx - TILE_W2 * (1 - t) * 0.5f, stepY + stepH)
+            close()
+        }
+        drawPath(stepPath, col.copy(alpha = 0.7f + 0.3f * t))
+    }
 }
 
 fun DrawScope.drawIsoTile(cx: Float, cy: Float, tile: TileType, height: Int = 0) {
