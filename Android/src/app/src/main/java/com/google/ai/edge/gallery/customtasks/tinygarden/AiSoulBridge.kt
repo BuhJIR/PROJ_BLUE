@@ -145,6 +145,20 @@ class AiSoulBridge(val engine: GameEngine) : ToolSet {
         return mapOf("result" to "success")
     }
 
+    @Tool(description = "Build a structure (ziggurat, tower, platform) using a compact DSL. " +
+        "Format: 'N×levels; stairs; non-trees; material; open-type; flat'. " +
+        "Example: '3×levels; stairs; non-trees; stone; open-type; flat'. " +
+        "Materials: stone, wood, dirt, grass. Use flat for platforms, peak for pyramids.")
+    fun buildStructure(
+        @ToolParam(description = "DSL string, e.g. '3×levels; stairs; stone; flat'") dsl: String,
+        @ToolParam(description = "X coordinate of the structure centre") x: Int,
+        @ToolParam(description = "Y coordinate of the structure centre") y: Int,
+    ): Map<String, Any> {
+        val spec = StructureParser.parse(dsl)
+        StructureGenerator.applyToEngine(spec, x, y, engine)
+        return mapOf("result" to "success", "levels" to spec.levels, "material" to spec.material.name)
+    }
+
     @Tool(description = "Apply a flag to all entities matching given flag conditions. Use for group events like festivals.")
     fun bulkApplyFlag(
         @ToolParam(description = "Comma-separated flags to match (e.g. 'GOBLIN,PEASANT').") matchFlags: String,
