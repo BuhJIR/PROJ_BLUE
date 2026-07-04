@@ -500,3 +500,273 @@ Everything in §17.2 onward is content-and-systems work that can proceed in para
 ---
 
 *Compiled from a full read of every `.kt` file under `customtasks/tinygarden/` as of this audit. No file was skimmed; every finding above traces to a specific line or absence thereof in the current `main` branch.*
+
+---
+
+## 19. Addendum — Chess Movement, World Law, and NPC Micro-Agents
+
+*Added following extended design discussion after the initial audit (§1–§18). This section is additive — nothing above is superseded.*
+
+### 19.1 The problem this section solves
+
+Two separate design conversations converged on the same architectural need:
+
+1. **World-scale narrative causality.** A plot event ("an ancient artefact extinguishes the sun") needs to become *ground truth* for every NPC simultaneously — not a flag one entity has and others don't, but a rewritten law of reality that all perception runs through from that point forward.
+2. **Deliberate movement friction.** Four-directional BFS movement (§ existing `Pathfinder.kt`) makes every tile reachable by every actor at the same cost. Assigning each Sister a **chess piece's movement pattern** turns "where do I go" into "which Sister do I need to be to get there" — a puzzle layer bolted onto exploration, not combat (combat, per this conversation, has no movement — it's turn-based JRPG resolution with no positional grid).
+
+Both are specified below as concrete data models and call sites, following the same standard as §1–§18: file-level, not aspirational.
+
+---
+
+### 19.2 World Law — the Soul rewrites the system prompt, NPCs only read it
+
+**Current state (confirmed by audit):** `SYSTEM_PROMPT` in `TinyGardenTask.kt` is a `private const val` — compiled once, immutable for the life of the app. There is no mechanism for in-game events to alter what the Soul believes about the world, and — critically for this addendum — **no NPC-level agent exists at all**. `BehaviourDecider.decide()` (§2) is a pure deterministic function, not an LLM call. NPCs today have no perception of narrative, only of flags and spatial events.
+
+**Required addition — `worldLaw` as live game state:**
+
+```kotlin
+// GameState gains a field alongside mode, player, entities, items, battleLog:
+data class GameState(
+    ...
+    val worldLaw: String = DEFAULT_WORLD_LAW,
+)
+
+const val DEFAULT_WORLD_LAW = "A world of quiet fields and old stone. The sun rises and sets as it always has."
+```
+
+**New Soul tool — the only thing permitted to change it:**
+
+```kotlin
+@Tool(description = "Rewrite the fundamental law of the world. Use only for major plot events that " +
+    "change reality itself for every inhabitant simultaneously — e.g. an artefact extinguishing the sun, " +
+    "a plague of silence, the invention of fire. Every NPC agent will perceive this as ground truth " +
+    "from their next wake cycle. This is not a flag on one entity — it rewrites what all entities believe " +
+    "to be true about existence.")
+fun rewriteWorldLaw(
+    @ToolParam(description = "The new law, written as a short declarative statement of fact, " +
+        "e.g. 'The sun has gone out. Darkness is permanent. No one remembers warmth.'") newLaw: String,
+): Map<String, Any> {
+    engine.setWorldLaw(newLaw)
+    engine.emitCustomEvent(x = 0f, y = 0f, radius = Float.MAX_VALUE, intensity = 1f,
+        payload = mapOf("type" to "WORLD_LAW_CHANGE"))
+    return mapOf("result" to "success", "law" to newLaw)
+}
+```
+
+`GameEngine.setWorldLaw` is a plain `updateState { copy(worldLaw = newLaw) }` — trivial once §1's dual-engine bug is fixed and there's exactly one `GameEngine` for this to mutate.
+
+**Negative-space law entries.** The earlier "no money in this world" discussion resolves as a *specialisation* of `worldLaw`, not a separate system: `rewriteWorldLaw("Money was never invented. No one has a word for it.")` is the same mechanism, same tool, same propagation. The distinction Serj drew — global negatives vs local positive lore — maps to:
+
+```kotlin
+data class GameState(
+    ...
+    val worldLaw: String = DEFAULT_WORLD_LAW,           // global, exclusionary, rewritten rarely
+    val settlementLore: Map<String, String> = emptyMap(),  // local, additive, keyed by region/settlement id
+)
+```
+
+`settlementLore["riverside_village"] = "Here, Three is honoured above all others. They fear the deep water."` is additive flavour a specific NPC agent's prompt includes; `worldLaw` is the one global constraint every agent's prompt always includes, unconditionally.
+
+---
+
+### 19.3 NPC Micro-Agents — isolated Edge AI calls, no chat history
+
+**The core design decision (Serj, verbatim intent):** significant NPCs are not puppeted by `BehaviourDecider`'s deterministic flag logic alone — they are small, independent Edge AI (on-device LLM) calls. Each such call receives:
+
+```
+┌─────────────────────────────────────────┐
+│  NPC Agent Prompt (constructed fresh,    │
+│  every wake — NO conversation history)   │
+├─────────────────────────────────────────┤
+│  1. worldLaw          (global, current)  │
+│  2. settlementLore[x] (if applicable)    │
+│  3. localRole         (this NPC's brief) │
+│  4. currentPerception (flags/events only,│
+│     never player chat transcript)        │
+└─────────────────────────────────────────┘
+        ↓
+   short LLM response → mapped to a
+   Behaviour (§2's sealed class) → executed
+   by BehaviourExecutor (§2's fix)
+```
+
+This is architecturally distinct from the Soul's own conversation (`TinyGardenViewModel.getCommand`, which *does* carry full chat history by design — the Soul remembers, the NPC does not). It's also distinct from `BehaviourDecider.decide()` (§2), which remains the **cheap fallback path** — not every NPC wake needs an LLM call; most should stay on deterministic flag logic for performance, and only NPCs flagged significant (`hasFlag("NAMED")`, `hasFlag("QUEST_GIVER")`, or similar) escalate to a micro-agent call.
+
+**Minimum data model:**
+
+```kotlin
+data class NpcAgentProfile(
+    val entityId: String,
+    val localRole: String,           // "You are a blacksmith. Metal matters to you above all else."
+    val usesMicroAgent: Boolean = false,  // false → falls back to BehaviourDecider (cheap path)
+)
+
+object NpcAgentRunner {
+    /**
+     * Constructs an isolated prompt (no history) and runs a short on-device inference.
+     * Falls back to BehaviourDecider.decide() if usesMicroAgent is false, or if the
+     * inference call fails/times out — the deterministic path is always the safety net.
+     */
+    suspend fun resolveBehaviour(
+        entity: Entity,
+        profile: NpcAgentProfile,
+        engine: GameEngine,
+        nearbyEntities: List<Entity>,
+        nearbyItems: List<WorldItem>,
+        event: WorldEvent?,
+    ): Behaviour {
+        if (!profile.usesMicroAgent) {
+            return BehaviourDecider.decide(entity, nearbyEntities, nearbyItems, event)
+        }
+        val prompt = buildString {
+            appendLine(engine.currentState().worldLaw)
+            engine.currentState().settlementLore[entity.memory["settlement"] as? String ?: ""]
+                ?.let { appendLine(it) }
+            appendLine(profile.localRole)
+            appendLine("You perceive: ${describePerception(nearbyEntities, nearbyItems, event)}")
+            appendLine("Respond with one short action.")
+        }
+        return runCatching { /* short, historyless LlmChatModelHelper call, parse to Behaviour */ }
+            .getOrElse { BehaviourDecider.decide(entity, nearbyEntities, nearbyItems, event) }
+    }
+}
+```
+
+**Cost note, stated plainly:** an on-device LLM call per significant NPC per wake is real inference load, not free. The `usesMicroAgent` gate exists specifically so this is opt-in per entity — village background characters stay on the deterministic `BehaviourDecider` path (§2's fix, still required regardless), and only named/quest-relevant NPCs pay the inference cost. This is a performance decision that must be respected in implementation, not an afterthought.
+
+---
+
+### 19.4 Chess Movement Patterns
+
+**Confirmed piece assignment (Serj, this conversation):**
+
+| Sister | Piece | Movement rule |
+|---|---|---|
+| **One** | King | One tile, any direction |
+| **Six** | Queen | Any direction, unlimited distance (until blocked) |
+| **Five** | Pawn | One tile forward only; captures diagonally; **promotes** at board edge or a designated zone |
+| Two, Three, Four | *(Knight, Bishop, Rook — assignment pending; slots reserved, not yet fixed)* | — |
+
+**This governs overworld exploration movement only.** Confirmed explicitly: combat has no positional grid in this design (turn-based JRPG resolution, per §7/§17.1) — chess patterns apply exclusively to how each Sister traverses the `IsoMap` between encounters.
+
+**Required refactor — `Pathfinder.kt` generalises away from hardcoded N/S/E/W:**
+
+```kotlin
+sealed class MovementPattern {
+    object King    : MovementPattern()  // One
+    object Queen   : MovementPattern()  // Six
+    data class Pawn(val forwardDir: Pathfinder.Step, val hasPromoted: Boolean = false) : MovementPattern()  // Five
+    object Knight  : MovementPattern()  // reserved
+    object Bishop  : MovementPattern()  // reserved
+    object Rook    : MovementPattern()  // reserved
+}
+
+object ChessMovement {
+    /** Generates all tiles reachable in exactly one move, before terrain/water filtering. */
+    fun candidateMoves(from: Pathfinder.Step, pattern: MovementPattern, map: IsoMap): List<Pathfinder.Step> =
+        when (pattern) {
+            is MovementPattern.King  -> KING_DELTAS.map { (dc, dr) -> from.offset(dc, dr) }
+            is MovementPattern.Queen -> slideInAllDirections(from, map)          // stops at first obstruction
+            is MovementPattern.Pawn  -> pawnMoves(from, pattern, map)            // one step forward, diagonal capture
+            is MovementPattern.Knight -> KNIGHT_DELTAS.map { (dc, dr) -> from.offset(dc, dr) }  // leaps — see §19.5
+            is MovementPattern.Bishop -> slideDiagonally(from, map)
+            is MovementPattern.Rook   -> slideOrthogonally(from, map)
+        }
+}
+```
+
+`Pathfinder.findPath` itself changes from its current fixed `dirs = listOf(N,S,W,E)` BFS neighbour list to accepting a `MovementPattern` parameter and calling `ChessMovement.candidateMoves` for its neighbour expansion at each BFS step — the search algorithm (BFS, L-shaped beautify pass) stays the same; only the neighbour-generation function becomes pluggable.
+
+**Which pattern is active is determined by the current die roll** (§15's `DieFace.Occupant(sister)` resolution) — when a Sister becomes the active occupant via `DiceCaster`, her `MovementPattern` becomes the one `Pathfinder.findPath` uses for all subsequent `selectTile`/`executePath` calls, until the die is re-cast.
+
+---
+
+### 19.5 Water as a Parametrised Barrier, Not a Boolean
+
+**Current state:** `IsoMap.isWalkable` returns `t != TileType.WATER` — water is impassable for everyone, uniformly. This is no longer sufficient: pieces cross water differently, and some water is crossable by width.
+
+```kotlin
+data class WaterBarrier(val widthInTiles: Int)  // measured perpendicular to the crossing direction
+
+fun canCrossWater(pattern: MovementPattern, barrier: WaterBarrier): Boolean = when (pattern) {
+    is MovementPattern.Knight -> barrier.widthInTiles <= 1   // a leap clears exactly one tile of water
+    is MovementPattern.Queen  -> barrier.widthInTiles <= 1   // formidable, but not exempt from geography
+    is MovementPattern.Bishop,
+    is MovementPattern.Rook,
+    is MovementPattern.King   -> false                        // slide/step pieces never cross water
+    is MovementPattern.Pawn   -> false                        // never — this is the point (see below)
+}
+```
+
+**Five's promotion mechanic** is the deliberate exception to her own rule, not a special case bolted onto water-crossing logic. In real chess, a pawn reaching the far rank promotes — here, reaching a designated **promotion zone** (the world's edge, or a zone the Soul or level design marks via `worldLaw`/`settlementLore`, e.g. "the far shore is a place of transformation") changes her active `MovementPattern` from `Pawn` to another pattern (thematically, `Queen` — mirroring standard chess promotion, and echoing the framing of the pawn as *potentially the strongest piece — that's her lore*).
+
+```kotlin
+object PromotionZones {
+    /** Returns true if (col,row) is a promotion trigger for Five specifically. */
+    fun isPromotionZone(col: Int, row: Int, map: IsoMap): Boolean =
+        col <= map.centerCol - map.cols / 2 + 1 ||   // world edge, west
+        col >= map.centerCol + map.cols / 2 - 1 ||   // world edge, east
+        row <= map.centerRow - map.rows / 2 + 1 ||   // world edge, north
+        row >= map.centerRow + map.rows / 2 - 1      // world edge, south
+        // additional designated zones (mid-map) are a worldLaw-driven extension point,
+        // not hardcoded here — the Soul can narratively mark a location as a promotion
+        // zone the same way it rewrites worldLaw, without an engine change.
+}
+```
+
+Once promoted, this is a **standing change to `Sister.currentPattern`** for the remainder of the session (or until a narrative event reverses it) — not a one-tile toggle. This is deliberately consistent with real chess: promotion is permanent.
+
+---
+
+### 19.6 Battle Button Grid — availability driven by active Sister
+
+**Confirmed UI (this conversation):**
+
+```
+┌─────────────────────────┐
+│      [🎲 Die]            │  ← always visible; swipe gesture casts it
+└─────────────────────────┘
+┌────────┬────────┬───────┐
+│  MOVE  │  WAIT  │ SCOUT │
+├────────┼────────┼───────┤
+│ COMBAT │ SPEAK  │ MAGIC │
+└────────┴────────┴───────┘
+```
+
+All six buttons render **grey/disabled** until a die cast resolves an active Sister. Availability then follows her `SisterAbilityProfile` (§8's data model, extended here with the specifics this conversation confirmed):
+
+```kotlin
+data class SisterAbilityProfile(
+    val canMove: Boolean = true,
+    val canScout: Boolean = true,
+    val canFight: Boolean,
+    val canCastMagic: Boolean,
+    val canBeStunned: Boolean = true,
+    val magicButtonLabelOverride: String? = null,  // e.g. Four's MAGIC button reads DEFEND instead
+)
+
+val SISTER_PROFILES: Map<String, SisterAbilityProfile> = mapOf(
+    "one"   to SisterAbilityProfile(canFight = true,  canCastMagic = false),
+    "two"   to SisterAbilityProfile(canFight = true,  canCastMagic = false),
+    "three" to SisterAbilityProfile(canFight = false, canCastMagic = true),
+    "four"  to SisterAbilityProfile(canFight = false, canCastMagic = true,
+                                     magicButtonLabelOverride = "DEFEND"),
+    "five"  to SisterAbilityProfile(canFight = false, canCastMagic = false),  // no attacks of any kind
+    "six"   to SisterAbilityProfile(canFight = true,  canCastMagic = true),   // both, no restriction
+)
+```
+
+Confirmed constraints from this conversation, stated exactly as given: **three Sisters cannot enter COMBAT at all**; **one Sister (Five) has no attacks whatsoever** — her MAGIC-equivalent button is pure defence; **two Sisters cannot cast MAGIC**; **any Sister can be stunned** (a status effect, per §17.10, that this button grid must also gate — a stunned active Sister greys the whole bottom row regardless of her profile, which is a UI-layer check on top of the profile table, not a replacement for it).
+
+**Wiring note:** this button grid is UI state derived from `GameEngine`'s currently-resolved `Sister` (via `DiceCaster`, §15), not new engine logic — `SisterAbilityProfile` lookup plus a stun-flag check is sufficient; no new `GameEngine` methods are required beyond what §15 already specifies (`engine.setActiveSister`).
+
+---
+
+### 19.7 Dependency note for the fix-order list (§18)
+
+This addendum's systems have their own internal dependency order, layered onto §18's existing sequence:
+
+- **World Law (19.2)** depends only on §1 (single engine) — can be built immediately after the top of §18's list, in parallel with §9/§3.
+- **NPC Micro-Agents (19.3)** depend on World Law (19.2) existing (agents need `worldLaw` to read) *and* on §2's `BehaviourExecutor` (the fallback path for `usesMicroAgent = false` must already work, or the escalation path has nothing to fall back to).
+- **Chess Movement (19.4–19.5)** depends on §15 (Sisters/Dice data model) for `DieFace.Occupant` resolution to exist, but is otherwise independent of World Law/NPC Agents — these two halves of this addendum can be built in parallel by different effort if the team ever splits.
+- **Battle Button Grid (19.6)** is pure UI wiring once §15 and §19.4 both exist — last in this addendum's internal order, first thing a player will actually see change.
