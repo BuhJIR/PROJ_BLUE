@@ -15,6 +15,8 @@ A turn-based tactical RPG with a living narrative. Every NPC exists autonomously
 
 The language model is not a chatbot. It describes the world, creates events, and commands entities through a tool-calling interface. The player and the model interact through a shared game space.
 
+The Soul can rewrite the world's fundamental law — a single line of ground truth every inhabitant perceives from that moment on. An artefact extinguishes the sun; a concept is simply never invented and no one has a word for it. Significant NPCs run their own isolated moment of thought — no memory of the player's conversation, only the world's current law and their own brief — while background characters follow the deterministic flag automaton beneath them.
+
 ---
 
 ## Architecture
@@ -52,16 +54,16 @@ The language model is not a chatbot. It describes the world, creates events, and
 The d6 die is not a randomiser. It is the ontology of the world.  
 Each face is a principle of reality made manifest.
 
-| # | Name | Principle |
-|---|------|-----------|
-| ⚀ | **One** | Ego, calculation |
-| ⚁ | **Two** | Co-operation, game theory |
-| ⚂ | **Three** | Harmony, nature |
-| ⚃ | **Four** | Sacrifice, chaos |
-| ⚄ | **Five** | Creation, death |
-| ⚅ | **Six** | Choice, duality, spacetime |
+| # | Name | Principle | Piece |
+|---|------|-----------|-------|
+| ⚀ | **One** | Ego, calculation | King — one tile, any direction |
+| ⚁ | **Two** | Co-operation, game theory | *(reserved)* |
+| ⚂ | **Three** | Harmony, nature | *(reserved)* |
+| ⚃ | **Four** | Sacrifice, chaos | *(reserved)* |
+| ⚄ | **Five** | Creation, death | Pawn — one tile forward, promotes at world's edge |
+| ⚅ | **Six** | Choice, duality, spacetime | Queen — any direction, unlimited distance |
 
-The face that lands determines who speaks in dialogue, who strikes in combat, and what stirs in the world when the die is cast upon it.
+The face that lands determines who speaks in dialogue, who strikes in combat, and what stirs in the world when the die is cast upon it. It also determines *how she walks the earth* — each Sister moves through the overworld as her chess piece would, not as a uniform four-directional step. A queen slides until something stops her. A pawn advances one tile and never crosses water, until she reaches the world's edge and is transformed into something else entirely — potentially the strongest piece on the board, by design.
 
 ---
 
@@ -120,9 +122,13 @@ NPC behaviour runs on a flag automaton: entities wake in response to world event
 
 #### ◐ In Progress
 
-**Combat.** The turn structure and action resolution are being designed around the dice system — each roll is not merely a number but a question of which Sister acts and on whose behalf.
+**Combat.** The turn structure and action resolution are being designed around the dice system — each roll is not merely a number but a question of which Sister acts and on whose behalf. Two Sisters cannot fight at all; one has no attack of any kind, only defence; two cannot cast magic; any of them can be stunned mid-turn.
 
-**The Dice.** A d6 face carries a Sister, a spell, or is left blank — the player assembles the die before entering a situation. Casting it into the world tile-by-tile is a mechanic still being built.
+**The Dice.** A d6 face carries a Sister, a spell, or is left blank — the player assembles the die before entering a situation. A blank roll, or a Sister's face landing when she isn't in the party, simply costs the turn. Casting it into the world tile-by-tile is a mechanic still being built.
+
+**Chess Movement.** Overworld exploration is being redesigned so each Sister traverses the map as her assigned chess piece — turning "where do I go" into "who do I need to be to get there." Water crosses differently for every piece; a knight leaps a single tile of it, a queen does the same despite her power, a pawn never crosses at all.
+
+**World Law.** A rewritable line of ground truth the Soul can alter at major story beats, read by every NPC's own moment of thought but never by the player's conversation history.
 
 **Main Menu.** A PS1-era title screen is partially implemented, awaiting integration as the application entry point.
 
