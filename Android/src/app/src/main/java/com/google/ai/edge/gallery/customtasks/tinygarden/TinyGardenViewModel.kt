@@ -80,7 +80,13 @@ constructor(
       val conversation = instance.conversation
       val contents = mutableListOf<Content>()
       if (instructionText.trim().isNotEmpty()) {
-        contents.add(Content.Text(instructionText))
+        // Активная Сестра окрашивает тон ответа Души — point-of-injection из SPEC §15:
+        // это контекст хода, не новая игровая логика
+        val activeSister = engine.currentState().activeSister
+        val augmented = if (activeSister != null) {
+          "$instructionText\n[Currently speaking through: ${activeSister.principle.display}]"
+        } else instructionText
+        contents.add(Content.Text(augmented))
       }
 
       try {

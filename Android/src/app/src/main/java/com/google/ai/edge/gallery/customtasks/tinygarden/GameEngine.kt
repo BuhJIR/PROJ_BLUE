@@ -107,6 +107,8 @@ data class GameState(
     val items: Map<String, WorldItem> = emptyMap(),
     val battleLog: List<String> = emptyList(),
     val turn: Int = 0,
+    // Сестра, чья грань выпала последней — активный голос/актёр (SPEC §15)
+    val activeSister: Sister? = null,
 ) {
     fun getEnemies() = entities.values.filter { it.hasFlag("ENEMY") }
     fun getLiving() = entities.values.filter { it.isAlive() }
@@ -365,6 +367,12 @@ class GameEngine {
     fun transitionMode(mode: GameMode) {
         updateState { copy(mode = mode) }
         logMessage(if (mode == GameMode.BATTLE) "⚔ Battle begins!" else "🌿 Back to the overworld.")
+    }
+
+    /** Выпавшая грань кубика назначает активную Сестру (SPEC §15). */
+    fun setActiveSister(sister: Sister) {
+        updateState { copy(activeSister = sister) }
+        logMessage("The die settles on ${sister.face}. ${sister.displayName} takes the fore — ${sister.principle.display.lowercase()}.")
     }
 
     fun currentState() = state
