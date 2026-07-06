@@ -75,6 +75,10 @@ data class IsoMap(
     val centerCol: Int = 0,
     val centerRow: Int = 0,
     val tiles: Array<Array<LayeredTile>> = Array(48) { Array(48) { LayeredTile(TileType.GRASS) } },
+    // Постройки — факт модели мира, не рендер-патч (SPEC §4/§5).
+    // Передаётся живой HashMap движка по ссылке: applyStructure видна сразу,
+    // без пересборки буфера. tileAt/isWalkable/Pathfinder читают их одинаково.
+    val overrides: Map<Pair<Int, Int>, LayeredTileEx> = emptyMap(),
 ) {
     // localCol/localRow → индекс в массиве
     private fun local(worldCol: Int, worldRow: Int): Pair<Int,Int> {
@@ -84,11 +88,15 @@ data class IsoMap(
     }
 
     fun tileAt(worldCol: Int, worldRow: Int): LayeredTile {
+        overrides[worldCol to worldRow]?.let { return LayeredTile(it.base, it.height) }
         val (lc, lr) = local(worldCol, worldRow)
         if (lc in 0 until cols && lr in 0 until rows) return tiles[lr][lc]
         // За пределами — генерируем на лету из глобального noise (без обрыва)
         return generateTile(worldCol, worldRow, WORLD_SEED)
     }
+
+    /** Полный тайл постройки (с лестницей) на этой клетке, если есть. */
+    fun structureAt(worldCol: Int, worldRow: Int): LayeredTileEx? = overrides[worldCol to worldRow]
 
     fun isWalkable(col: Int, row: Int): Boolean {
         val t = tileAt(col, row).base
@@ -129,7 +137,11 @@ fun generateTile(worldCol: Int, worldRow: Int, seed: Long): LayeredTile {
 }
 
 // ── Генерация буфера карты вокруг центра ──────────────────────────────────────
-fun generateMapAround(centerCol: Int, centerRow: Int, cols: Int = 48, rows: Int = 48): IsoMap {
+fun generateMapAround(
+    centerCol: Int, centerRow: Int,
+    cols: Int = 48, rows: Int = 48,
+    overrides: Map<Pair<Int, Int>, LayeredTileEx> = emptyMap(),
+): IsoMap {
     val tiles = Array(rows) { r ->
         Array(cols) { c ->
             val wc = c - cols / 2 + centerCol
@@ -137,7 +149,7 @@ fun generateMapAround(centerCol: Int, centerRow: Int, cols: Int = 48, rows: Int 
             generateTile(wc, wr, IsoMap.WORLD_SEED)
         }
     }
-    return IsoMap(cols, rows, centerCol, centerRow, tiles)
+    return IsoMap(cols, rows, centerCol, centerRow, tiles, overrides)
 }
 
 // ── Sprite cache ───────────────────────────────────────────────────────────────
@@ -190,15 +202,17 @@ fun rememberSpriteFrame(totalFrames: Int, fps: Int = 12): State<Int> {
 fun IsoMapRenderer(
     gameState: GameState,
     engine: GameEngine? = null,
-    map: IsoMap = remember { generateMapAround(0, 0) },
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
     var camOffset by remember { mutableStateOf(Offset(0f, -180f)) }
     val spriteFrame by rememberSpriteFrame(45, fps = 12)
 
-    // Карта регенерируется когда игрок близко к краю — ОДНИМ seed'ом
-    var liveMap by remember { mutableStateOf(map) }
+    // Карта регенерируется когда игрок близко к краю — ОДНИМ seed'ом.
+    // engine.worldMap — та же карта, которой пользуются Pathfinder и BehaviourExecutor.
+    var liveMap by remember {
+        mutableStateOf(engine?.worldMap ?: generateMapAround(0, 0))
+    }
     val player = gameState.player
     LaunchedEffect(player.col, player.row) {
         val halfC = liveMap.cols / 2
@@ -207,7 +221,11 @@ fun IsoMapRenderer(
         val dr = player.row - liveMap.centerRow
         // Рестартуем буфер если игрок ближе 8 тайлов к краю
         if (abs(dc) > halfC - 8 || abs(dr) > halfR - 8) {
-            liveMap = generateMapAround(player.col, player.row)
+            liveMap = generateMapAround(
+                player.col, player.row,
+                overrides = engine?.structureOverrides ?: emptyMap(),
+            )
+            engine?.updateWorldMap(liveMap)
         }
     }
 
@@ -242,9 +260,9 @@ fun IsoMapRenderer(
             for (lc in 0 until liveMap.cols) {
                 val wc = lc + wStartC
                 val wr = lr + wStartR
-                val override = engine?.structureTileAt(wc, wr)
-                val lt = if (override != null) LayeredTile(override.base, override.height)
-                         else liveMap.tiles[lr][lc]
+                // tileAt смотрит сквозь overrides — постройки видны и здесь,
+                // и в Pathfinder/isWalkable, одним и тем же путём (SPEC §5)
+                val lt = liveMap.tileAt(wc, wr)
                 val iso = isoToScreen(wc.toFloat(), wr.toFloat(), lt.height.toFloat())
                 val sx = cx + iso.x
                 val sy = cy + iso.y
@@ -256,7 +274,7 @@ fun IsoMapRenderer(
                 drawIsoTile(sx, sy, lt.base, lt.height)
 
                 // Ступень — диагональный переход внутри клетки
-                engine?.structureTileAt(wc, wr)?.stair?.let { stair ->
+                liveMap.structureAt(wc, wr)?.stair?.let { stair ->
                     drawStairOverlay(sx, sy, stair, lt.base)
                 }
 

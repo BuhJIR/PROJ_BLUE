@@ -320,7 +320,20 @@ class GameEngine {
     }
 
     // ── Структуры (зиккураты, здания) от StructureDSL ─────────────────────────
+    // Единственный источник правды о постройках. IsoMap держит ссылку на эту
+    // же HashMap — applyStructure видна tileAt/isWalkable/Pathfinder мгновенно (SPEC §4/§5).
     val structureOverrides = HashMap<Pair<Int,Int>, LayeredTileEx>()
+
+    /**
+     * Живая карта мира. Рендерер пересобирает буфер вокруг игрока и передаёт
+     * сюда — Pathfinder и BehaviourExecutor всегда работают с актуальной картой.
+     */
+    var worldMap: IsoMap = generateMapAround(0, 0, overrides = structureOverrides)
+        private set
+
+    fun updateWorldMap(map: IsoMap) {
+        worldMap = map
+    }
 
     fun applyStructure(tiles: List<Triple<Int, Int, LayeredTileEx>>) {
         tiles.forEach { (c, r, t) -> structureOverrides[c to r] = t }
