@@ -26,7 +26,10 @@ private const val SYSTEM_PROMPT =
   "- executeMove(target, direction, steps)\n" +
   "- executeDamage(target, amount)\n" +
   "- emitWorldEvent(x, y, radius, intensity)\n" +
-  "- bulkApplyFlag(matchFlags, removeGroup, addFlags)\n\n" +
+  "- bulkApplyFlag(matchFlags, removeGroup, addFlags)\n" +
+  "- buildStructure(dsl, x, y) — здание одной DSL-строкой: 'N×levels; stairs; non-trees; материал; flat|peak'.\n" +
+  "  Примеры DSL: '3×levels; stairs; stone; flat' (зиккурат-терраса), " +
+  "'5×levels; stairs; non-trees; stone; peak' (пирамида с вершиной), '1×levels; wood; flat' (помост).\n\n" +
   "JSON команды:\n" +
   "{\"action\":\"SPAWN\",\"name\":\"Goblin\",\"hp\":20,\"x\":6,\"y\":4,\"flags\":[\"ENEMY\",\"AGGRESSIVE\"]}\n" +
   "{\"action\":\"SET_FLAG\",\"target\":\"Hero\",\"flag\":\"POISONED\",\"value\":true}\n" +

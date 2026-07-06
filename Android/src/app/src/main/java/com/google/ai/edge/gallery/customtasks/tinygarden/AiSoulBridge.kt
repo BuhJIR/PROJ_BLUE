@@ -10,6 +10,49 @@ import org.json.JSONObject
 private const val TAG = "AiSoulBridge"
 
 /**
+ * Разбор смешанного ответа модели (SPEC §10).
+ *
+ * Маленькая on-device модель регулярно пишет нарратив и JSON-команду в одном
+ * ответе: "Гоблин рычит. {\"action\":\"DAMAGE\",...}". Раньше команда,
+ * обёрнутая в прозу, молча терялась. Сканер выделяет первый сбалансированный
+ * {...}-блок (учитывая строки и экранирование), остальное — нарратив.
+ */
+object SoulResponseParser {
+
+    /** @return (json или null, нарратив вне блока) */
+    fun extractFirstJsonObject(text: String): Pair<String?, String> {
+        var depth = 0
+        var start = -1
+        var inString = false
+        var escaped = false
+        for (i in text.indices) {
+            val c = text[i]
+            if (inString) {
+                when {
+                    escaped   -> escaped = false
+                    c == '\\' -> escaped = true
+                    c == '"'  -> inString = false
+                }
+                continue
+            }
+            when (c) {
+                '"' -> if (depth > 0) inString = true
+                '{' -> { if (depth == 0) start = i; depth++ }
+                '}' -> if (depth > 0) {
+                    depth--
+                    if (depth == 0) {
+                        val json = text.substring(start, i + 1)
+                        val narrative = (text.substring(0, start) + " " + text.substring(i + 1)).trim()
+                        return json to narrative
+                    }
+                }
+            }
+        }
+        return null to text.trim()
+    }
+}
+
+/**
  * AiSoulBridge — интерфейс между Gemma и GameEngine.
  *
  * Два канала:
