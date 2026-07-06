@@ -16,8 +16,6 @@ import com.google.ai.edge.litertlm.Contents
 import com.google.ai.edge.litertlm.tool
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.flow.receiveAsFlow
 
 private const val SYSTEM_PROMPT =
   "Ты — Душа. Живой Мастер игры. Саркастичный, холодный, точный.\n" +
@@ -42,9 +40,6 @@ private const val SYSTEM_PROMPT =
 class TinyGardenTask @Inject constructor(
   private val aiBridge: AiSoulBridge,
 ) : CustomTask {
-  private val _updateChannel = Channel<TinyGardenCommand>(Channel.BUFFERED)
-  private val commandFlow = _updateChannel.receiveAsFlow()
-  
   override val task =
     Task(
       id = BuiltInTaskId.LLM_TINY_GARDEN,
@@ -71,7 +66,6 @@ class TinyGardenTask @Inject constructor(
     systemInstruction: Contents?,
     onDone: (error: String) -> Unit,
   ) {
-    clearQueue()
     // The singleton aiBridge wraps the singleton GameEngine — the same engine the
     // renderer observes. Constructing a fresh engine here would give the model's
     // tools a world no one ever sees (SPEC §1).
@@ -94,7 +88,6 @@ class TinyGardenTask @Inject constructor(
     model: Model,
     onDone: () -> Unit,
   ) {
-    clearQueue()
     LlmChatModelHelper.cleanUp(model = model, onDone = onDone)
   }
 
@@ -106,13 +99,8 @@ class TinyGardenTask @Inject constructor(
       modelManagerViewModel = customTaskData.modelManagerViewModel,
       tools = listOf(),
       bottomPadding = customTaskData.bottomPadding,
-      commandFlow = commandFlow,
       setAppBarControlsDisabled = customTaskData.setAppBarControlsDisabled,
       setTopBarVisible = customTaskData.setTopBarVisible,
     )
-  }
-
-  private fun clearQueue() {
-    while (_updateChannel.tryReceive().isSuccess) {}
   }
 }
