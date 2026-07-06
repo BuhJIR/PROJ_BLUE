@@ -18,10 +18,14 @@ import com.google.ai.edge.litertlm.Content
 import com.google.ai.edge.litertlm.Contents
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import java.io.File
 import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -52,10 +56,32 @@ constructor(
   private val _isResettingConversation = MutableStateFlow(false)
   private val isResettingConversation = _isResettingConversation.asStateFlow()
 
+  private val saveFile = File(context.filesDir, GameStatePersistence.SAVE_FILE_NAME)
+  private val saveTick = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+
   init {
+      // Загрузка — один раз на жизнь синглтон-движка, до подписки observe (SPEC §3)
+      if (!engine.restoreAttempted) {
+          engine.restoreAttempted = true
+          GameStatePersistence.load(engine, saveFile)
+      }
       engine.observe { newState ->
           _uiState.update { it.copy(gameState = newState) }
+          saveTick.tryEmit(Unit)
       }
+      // Debounced autosave: пишем после 2 секунд тишины, не на каждый кадр
+      viewModelScope.launch(Dispatchers.IO) {
+          saveTick.collectLatest {
+              delay(2000)
+              GameStatePersistence.save(engine, saveFile)
+          }
+      }
+  }
+
+  override fun onCleared() {
+      // ViewModel уходит (навигация/процесс) — не полагаемся на debounce
+      GameStatePersistence.save(engine, saveFile)
+      super.onCleared()
   }
 
   fun getCommand(

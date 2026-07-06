@@ -27,6 +27,7 @@ abstract class GameObject(
     fun hasFlag(flag: String) = flags.contains(flag.uppercase())
 
     fun registerGroup(group: FlagGroup) { flagGroups[group.name.uppercase()] = group }
+    fun registeredGroups(): List<FlagGroup> = flagGroups.values.toList()
     fun addGroup(groupName: String) { flagGroups[groupName.uppercase()]?.flags?.forEach { addFlag(it) } }
     fun removeGroup(groupName: String) { flagGroups[groupName.uppercase()]?.flags?.forEach { removeFlag(it) } }
     fun hasGroup(groupName: String): Boolean =
@@ -57,7 +58,8 @@ class Entity(
     var x: Int = 0,
     var y: Int = 0,
     var interestRadius: Float = 192f,  // как далеко entity "слышит" события
-) : GameObject(name = name) {
+    id: String = UUID.randomUUID().toString(),  // стабилен через save/load (SPEC §3)
+) : GameObject(id = id, name = name) {
     // Изометрические координаты (алиасы для ясности в рендерере)
     var col: Int get() = x; set(v) { x = v }
     var row: Int get() = y; set(v) { y = v }
@@ -142,6 +144,10 @@ class GameEngine {
 
     val spatialHash = SpatialHash(cellSize = 64f)
     val eventBus = EventBus()
+
+    // true после первой попытки загрузки сохранения — engine синглтон, а
+    // ViewModel пересоздаётся; повторная загрузка затёрла бы живую сессию (SPEC §3)
+    var restoreAttempted: Boolean = false
 
     init {
         // Подписываемся на все события — будим NPC в радиусе
@@ -427,6 +433,20 @@ class GameEngine {
     /** Отменяет все корутины движка (executePath и т.п.). После вызова engine мёртв. */
     fun shutdown() {
         scope.cancel()
+    }
+
+    /**
+     * Восстановление мира из сохранения (SPEC §3): состояние, постройки,
+     * пере-заселение spatialHash. worldMap держит ссылку на structureOverrides,
+     * поэтому clear+putAll сохраняет её валидной.
+     */
+    fun restore(newState: GameState, overrides: Map<Pair<Int, Int>, LayeredTileEx>) {
+        spatialHash.clear()
+        structureOverrides.clear()
+        structureOverrides.putAll(overrides)
+        spatialHash.insert(newState.player)
+        newState.entities.values.forEach { spatialHash.insert(it) }
+        updateState { newState }
     }
 
     // ── Структуры (зиккураты, здания) от StructureDSL ─────────────────────────
