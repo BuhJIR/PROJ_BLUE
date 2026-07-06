@@ -90,9 +90,8 @@ object BehaviourDecider {
 
         // 5. TIRED + HOME → идти домой
         if (entity.hasFlag("TIRED")) {
-            val home = entity.memory["home"]
-            if (home is Pair<*, *>) {
-                return Behaviour.Navigate(home.first as Int, home.second as Int, "rest")
+            entity.memoryCoord("home")?.let { (hc, hr) ->
+                return Behaviour.Navigate(hc, hr, "rest")
             }
         }
 

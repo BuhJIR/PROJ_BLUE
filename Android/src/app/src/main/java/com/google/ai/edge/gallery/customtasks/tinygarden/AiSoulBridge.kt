@@ -10,6 +10,49 @@ import org.json.JSONObject
 private const val TAG = "AiSoulBridge"
 
 /**
+ * Разбор смешанного ответа модели (SPEC §10).
+ *
+ * Маленькая on-device модель регулярно пишет нарратив и JSON-команду в одном
+ * ответе: "Гоблин рычит. {\"action\":\"DAMAGE\",...}". Раньше команда,
+ * обёрнутая в прозу, молча терялась. Сканер выделяет первый сбалансированный
+ * {...}-блок (учитывая строки и экранирование), остальное — нарратив.
+ */
+object SoulResponseParser {
+
+    /** @return (json или null, нарратив вне блока) */
+    fun extractFirstJsonObject(text: String): Pair<String?, String> {
+        var depth = 0
+        var start = -1
+        var inString = false
+        var escaped = false
+        for (i in text.indices) {
+            val c = text[i]
+            if (inString) {
+                when {
+                    escaped   -> escaped = false
+                    c == '\\' -> escaped = true
+                    c == '"'  -> inString = false
+                }
+                continue
+            }
+            when (c) {
+                '"' -> if (depth > 0) inString = true
+                '{' -> { if (depth == 0) start = i; depth++ }
+                '}' -> if (depth > 0) {
+                    depth--
+                    if (depth == 0) {
+                        val json = text.substring(start, i + 1)
+                        val narrative = (text.substring(0, start) + " " + text.substring(i + 1)).trim()
+                        return json to narrative
+                    }
+                }
+            }
+        }
+        return null to text.trim()
+    }
+}
+
+/**
  * AiSoulBridge — интерфейс между Gemma и GameEngine.
  *
  * Два канала:
@@ -45,6 +88,30 @@ class AiSoulBridge(val engine: GameEngine) : ToolSet {
                             e.registerGroup(FlagGroup(gName, gFlags))
                             if (g.optBoolean("active", false)) e.addGroup(gName)
                         }
+                    }
+                    // Нужды: [{"name":"HUNGER","priority":90,"satisfied_by":["FRUIT","FOOD"]}]
+                    json.optJSONArray("needs")?.let { arr ->
+                        for (i in 0 until arr.length()) {
+                            val n = arr.getJSONObject(i)
+                            val satisfied = n.optJSONArray("satisfied_by")?.let { sa ->
+                                (0 until sa.length()).map { sa.getString(it).uppercase() }.toSet()
+                            } ?: emptySet()
+                            e.needs.add(Need(n.optString("name", "NEED"), n.optInt("priority", 50), satisfied))
+                        }
+                    }
+                    // Дом: {"home":{"x":4,"y":7}} — TIRED поведёт entity сюда
+                    json.optJSONObject("home")?.let { h ->
+                        e.memory["home"] = MemoryValue.Coord(h.optInt("x", e.x), h.optInt("y", e.y))
+                    }
+                    // Поселение — ключ в settlementLore для промпта микро-агента (SPEC §19.3)
+                    json.optString("settlement").takeIf { it.isNotEmpty() }?.let {
+                        e.memory["settlement"] = MemoryValue.Str(it)
+                    }
+                    // Роль — NPC становится микро-агентом с собственным моментом мысли
+                    json.optString("role").takeIf { it.isNotEmpty() }?.let { role ->
+                        engine.registerNpcProfile(
+                            NpcAgentProfile(entityId = e.id, localRole = role, usesMicroAgent = true)
+                        )
                     }
                     engine.spawnEntity(e)
                     Log.d(TAG, "Spawned: $entityName at ($x,$y)")
@@ -98,6 +165,19 @@ class AiSoulBridge(val engine: GameEngine) : ToolSet {
                     val target = json.optString("target")
                     val amount = json.optInt("amount", 0)
                     engine.applyDamage(target, amount)
+                }
+
+                "WORLD_LAW" -> {
+                    // {"action":"WORLD_LAW","law":"The sun has gone out. Darkness is permanent."}
+                    val law = json.optString("law")
+                    if (law.isNotEmpty()) engine.setWorldLaw(law)
+                }
+
+                "SETTLEMENT_LORE" -> {
+                    // {"action":"SETTLEMENT_LORE","id":"riverside_village","lore":"Here, Three is honoured above all."}
+                    val id = json.optString("id")
+                    val lore = json.optString("lore")
+                    if (id.isNotEmpty() && lore.isNotEmpty()) engine.setSettlementLore(id, lore)
                 }
 
                 else -> engine.logMessage("Soul whispers: ${jsonString.take(120)}")
@@ -157,6 +237,19 @@ class AiSoulBridge(val engine: GameEngine) : ToolSet {
         val spec = StructureParser.parse(dsl)
         StructureGenerator.applyToEngine(spec, x, y, engine)
         return mapOf("result" to "success", "levels" to spec.levels, "material" to spec.material.name)
+    }
+
+    @Tool(description = "Rewrite the fundamental law of the world. Use only for major plot events that " +
+        "change reality itself for every inhabitant simultaneously — e.g. an artefact extinguishing the sun, " +
+        "a plague of silence, the invention of fire. Every NPC agent will perceive this as ground truth " +
+        "from their next wake cycle. This is not a flag on one entity — it rewrites what all entities believe " +
+        "to be true about existence.")
+    fun rewriteWorldLaw(
+        @ToolParam(description = "The new law, written as a short declarative statement of fact, " +
+            "e.g. 'The sun has gone out. Darkness is permanent. No one remembers warmth.'") newLaw: String,
+    ): Map<String, Any> {
+        engine.setWorldLaw(newLaw)
+        return mapOf("result" to "success", "law" to newLaw)
     }
 
     @Tool(description = "Apply a flag to all entities matching given flag conditions. Use for group events like festivals.")

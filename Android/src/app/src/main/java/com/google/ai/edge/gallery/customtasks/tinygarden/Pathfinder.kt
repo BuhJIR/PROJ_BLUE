@@ -1,23 +1,30 @@
 package com.google.ai.edge.gallery.customtasks.tinygarden
 
 /**
- * Pathfinder — 4-way BFS с L-образным ("ход конём") визуальным путём.
+ * Pathfinder — BFS с подключаемой генерацией соседей (SPEC §19.4).
  *
  * Алгоритм:
- *  1. BFS находит кратчайший путь (без диагоналей)
- *  2. beautifyPath() переупорядочивает шаги: сначала длинная ось, потом короткая
- *     → получаем красивый L-образный поворот вместо зигзага
+ *  1. BFS находит путь с минимальным числом ходов; соседей на каждом шаге даёт
+ *     ChessMovement.candidateMoves(pattern) — Walker (обычный 4-way), King,
+ *     Queen, Pawn и т.д. ходят по одному и тому же поиску
+ *  2. Для Walker beautifyPath() переупорядочивает шаги: сначала длинная ось,
+ *     потом короткая → L-образный поворот вместо зигзага
  */
 object Pathfinder {
 
     data class Step(val col: Int, val row: Int)
 
-    /** BFS — кратчайший путь от (sc,sr) до (ec,er). null если недостижим. */
+    // Мир процедурно бесконечен: недостижимая цель (вода) иначе заставила бы
+    // BFS расширяться вечно. Достигли лимита — считаем цель недостижимой.
+    private const val MAX_EXPANSIONS = 20_000
+
+    /** BFS — путь с минимальным числом ходов от (sc,sr) до (ec,er). null если недостижим. */
     fun findPath(
         startCol: Int, startRow: Int,
         endCol: Int, endRow: Int,
         map: IsoMap,
         blockedCells: Set<Pair<Int,Int>> = emptySet(),
+        pattern: MovementPattern = MovementPattern.Walker,
     ): List<Step>? {
         if (startCol == endCol && startRow == endRow) return emptyList()
 
@@ -31,10 +38,10 @@ object Pathfinder {
         visited.add(start)
         parent[start] = null
 
-        val dirs = listOf(0 to -1, 0 to 1, -1 to 0, 1 to 0) // N S W E
-
-        while (queue.isNotEmpty()) {
+        var expansions = 0
+        while (queue.isNotEmpty() && expansions < MAX_EXPANSIONS) {
             val cur = queue.removeFirst()
+            expansions++
             if (cur == target) {
                 // Восстанавливаем путь
                 val path = mutableListOf<Step>()
@@ -44,12 +51,11 @@ object Pathfinder {
                     node = parent[node]
                 }
                 path.reverse()
-                return beautifyPath(start, path)
+                // beautify пересобирает путь единичными шагами — корректно только для Walker
+                return if (pattern is MovementPattern.Walker) beautifyPath(start, path) else path
             }
-            for ((dc, dr) in dirs) {
-                val next = Step(cur.col + dc, cur.row + dr)
+            for (next in ChessMovement.candidateMoves(cur, pattern, map)) {
                 if (next in visited) continue
-                if (!map.isWalkable(next.col, next.row)) continue
                 if (Pair(next.col, next.row) in blockedCells) continue
                 visited.add(next)
                 parent[next] = cur

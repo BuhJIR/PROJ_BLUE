@@ -6,6 +6,7 @@ import kotlin.math.abs
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 
@@ -26,10 +27,22 @@ abstract class GameObject(
     fun hasFlag(flag: String) = flags.contains(flag.uppercase())
 
     fun registerGroup(group: FlagGroup) { flagGroups[group.name.uppercase()] = group }
+    fun registeredGroups(): List<FlagGroup> = flagGroups.values.toList()
     fun addGroup(groupName: String) { flagGroups[groupName.uppercase()]?.flags?.forEach { addFlag(it) } }
     fun removeGroup(groupName: String) { flagGroups[groupName.uppercase()]?.flags?.forEach { removeFlag(it) } }
     fun hasGroup(groupName: String): Boolean =
         flagGroups[groupName.uppercase()]?.flags?.any { hasFlag(it) } ?: false
+}
+
+/**
+ * Типизированное значение в памяти Entity.
+ * Sealed-обёртка вместо Any: без unchecked-кастов и сериализуется в JSON (SPEC §3, §9).
+ */
+sealed class MemoryValue {
+    data class Str(val v: String) : MemoryValue()
+    data class Num(val v: Double) : MemoryValue()
+    data class Coord(val col: Int, val row: Int) : MemoryValue()
+    data class Bool(val v: Boolean) : MemoryValue()
 }
 
 /**
@@ -45,15 +58,23 @@ class Entity(
     var x: Int = 0,
     var y: Int = 0,
     var interestRadius: Float = 192f,  // как далеко entity "слышит" события
-) : GameObject(name = name) {
+    id: String = UUID.randomUUID().toString(),  // стабилен через save/load (SPEC §3)
+) : GameObject(id = id, name = name) {
     // Изометрические координаты (алиасы для ясности в рендерере)
     var col: Int get() = x; set(v) { x = v }
     var row: Int get() = y; set(v) { y = v }
 
     val needs: MutableList<Need> = mutableListOf()
-    val memory: MutableMap<String, Any> = mutableMapOf()
+    val memory: MutableMap<String, MemoryValue> = mutableMapOf()
     var currentBehaviour: Behaviour = Behaviour.Idle
     var isAwake: Boolean = true
+
+    // Типобезопасные читатели памяти — единственный способ достать значение
+    fun memoryString(key: String): String? = (memory[key] as? MemoryValue.Str)?.v
+    fun memoryNum(key: String): Double? = (memory[key] as? MemoryValue.Num)?.v
+    fun memoryCoord(key: String): Pair<Int, Int>? =
+        (memory[key] as? MemoryValue.Coord)?.let { it.col to it.row }
+    fun memoryBool(key: String): Boolean? = (memory[key] as? MemoryValue.Bool)?.v
 
     /** Нанести урон. Возвращает true если entity умер. */
     fun applyDamage(amount: Int): Boolean {
@@ -80,6 +101,10 @@ class Entity(
 
 enum class GameMode { OVERWORLD, BATTLE }
 
+/** Закон мира по умолчанию — то, что каждый NPC считает истиной (SPEC §19.2). */
+const val DEFAULT_WORLD_LAW =
+    "A world of quiet fields and old stone. The sun rises and sets as it always has."
+
 /** Глобальный State — иммутабельный снимок мира для Compose. */
 data class GameState(
     val mode: GameMode = GameMode.OVERWORLD,
@@ -88,6 +113,12 @@ data class GameState(
     val items: Map<String, WorldItem> = emptyMap(),
     val battleLog: List<String> = emptyList(),
     val turn: Int = 0,
+    // Сестра, чья грань выпала последней — активный голос/актёр (SPEC §15)
+    val activeSister: Sister? = null,
+    // Закон мира: глобальная, исключающая истина; переписывается редко (SPEC §19.2)
+    val worldLaw: String = DEFAULT_WORLD_LAW,
+    // Локальный, аддитивный лор поселений: ключ — id региона/поселения
+    val settlementLore: Map<String, String> = emptyMap(),
 ) {
     fun getEnemies() = entities.values.filter { it.hasFlag("ENEMY") }
     fun getLiving() = entities.values.filter { it.isAlive() }
@@ -113,6 +144,10 @@ class GameEngine {
 
     val spatialHash = SpatialHash(cellSize = 64f)
     val eventBus = EventBus()
+
+    // true после первой попытки загрузки сохранения — engine синглтон, а
+    // ViewModel пересоздаётся; повторная загрузка затёрла бы живую сессию (SPEC §3)
+    var restoreAttempted: Boolean = false
 
     init {
         // Подписываемся на все события — будим NPC в радиусе
@@ -149,61 +184,117 @@ class GameEngine {
         }
     }
 
+    // Guard от каскадной рекурсии: A бьёт B → COMBAT-событие будит A снова.
+    // Пока entity исполняет поведение, повторное пробуждение только обновляет
+    // currentBehaviour, но не запускает второй execute (SPEC §2).
+    private val executingBehaviours = mutableSetOf<String>()
+
+    // Профили значимых NPC — только они эскалируют до микро-агента (SPEC §19.3)
+    val npcProfiles = HashMap<String, NpcAgentProfile>()
+
+    fun registerNpcProfile(profile: NpcAgentProfile) {
+        npcProfiles[profile.entityId] = profile
+    }
+
     private fun wakeEntity(entity: Entity, event: WorldEvent, strength: Float) {
         entity.isAwake = true
         val nearby = spatialHash.query(entity.x.toFloat(), entity.y.toFloat(), entity.interestRadius)
+            .filter { it.id != entity.id }
         val nearbyItems = state.items.values.filter { item ->
             val dx = (item.x - entity.x).toFloat()
             val dy = (item.y - entity.y).toFloat()
             sqrt(dx * dx + dy * dy) <= entity.interestRadius
         }
-        val newBehaviour = BehaviourDecider.decide(
-            entity = entity,
-            nearbyEntities = nearby.filter { it.id != entity.id },
-            nearbyItems = nearbyItems,
-            event = event,
-        )
+        val profile = npcProfiles[entity.id]
+        if (profile?.usesMicroAgent == true) {
+            // Значимый NPC — собственный момент мысли, асинхронно; при любом
+            // сбое NpcAgentRunner сам откатывается на детерминированный путь
+            scope.launch {
+                val decided = NpcAgentRunner.resolveBehaviour(
+                    entity, profile, this@GameEngine, nearby, nearbyItems, event,
+                )
+                applyDecidedBehaviour(entity, decided)
+            }
+        } else {
+            applyDecidedBehaviour(
+                entity,
+                BehaviourDecider.decide(entity, nearby, nearbyItems, event),
+            )
+        }
+    }
+
+    private fun applyDecidedBehaviour(entity: Entity, newBehaviour: Behaviour) {
         entity.currentBehaviour = newBehaviour
         // Логируем только интересное поведение
         if (newBehaviour !is Behaviour.Wander && newBehaviour !is Behaviour.Idle) {
             logMessage("${entity.name} → ${newBehaviour::class.simpleName}")
         }
+        // Решение → действие. Без этого вызова все Behaviour — тупики (SPEC §2).
+        if (executingBehaviours.add(entity.id)) {
+            try {
+                BehaviourExecutor.execute(entity, this)
+            } finally {
+                executingBehaviours.remove(entity.id)
+            }
+        }
         updateState { this }  // триггерим UI
+    }
+
+    // ── Резолверы для актуатора и инструментов ───────────────────────────────
+
+    /** Находит entity по id или имени; игрок включён. */
+    fun resolveEntity(idOrName: String): Entity? {
+        val p = state.player
+        if (idOrName == p.id || idOrName.equals(p.name, ignoreCase = true)) return p
+        return state.entities[idOrName]
+            ?: state.entities.values.firstOrNull { it.name.equals(idOrName, ignoreCase = true) }
+    }
+
+    /** Занятые клетки (entity + игрок), кроме перечисленных id. */
+    fun occupiedCells(except: Set<String> = emptySet()): Set<Pair<Int, Int>> {
+        val cells = mutableSetOf<Pair<Int, Int>>()
+        if (state.player.id !in except) cells.add(state.player.col to state.player.row)
+        state.entities.values.forEach { if (it.id !in except) cells.add(it.col to it.row) }
+        return cells
     }
 
     // ── Public API для ИИ и игрока ───────────────────────────────────────────
 
     fun moveEntity(entityId: String, dx: Int, dy: Int) {
+        // События эмитим ПОСЛЕ завершения мутации: emit внутри лямбды updateState
+        // запускает вложенные мутации, результат которых внешняя лямбда затирает.
+        var footstep: WorldEvent? = null
         updateState {
-            if (entityId.equals(player.name, ignoreCase = true)) {
+            if (entityId.equals(player.name, ignoreCase = true) || entityId == player.id) {
                 val oldX = player.x; val oldY = player.y
                 val newPlayer = player.apply {
                     x += dx; y += dy
                     // Обновляем направление для рендерера
-                    memory["direction"] = when {
+                    memory["direction"] = MemoryValue.Str(when {
                         dx > 0 && dy == 0 -> "EAST"
                         dx < 0 && dy == 0 -> "WEST"
                         dy < 0            -> "NORTH"
                         else              -> "SOUTH"
-                    }
+                    })
                 }
                 spatialHash.move(newPlayer, oldX, oldY)
-                eventBus.emit(WorldEvent(WorldEventType.FOOTSTEP, newPlayer.x.toFloat(), newPlayer.y.toFloat(), 0.4f, 96f, "player"))
+                footstep = WorldEvent(WorldEventType.FOOTSTEP, newPlayer.x.toFloat(), newPlayer.y.toFloat(), 0.4f, 96f, "player")
                 copy(player = newPlayer)
             } else {
                 val e = entities[entityId] ?: return@updateState this
                 val oldX = e.x; val oldY = e.y
                 e.x += dx; e.y += dy
-                e.memory["direction"] = when {
+                e.memory["direction"] = MemoryValue.Str(when {
                     dx > 0 && dy == 0 -> "EAST"
                     dx < 0 && dy == 0 -> "WEST"
                     dy < 0            -> "NORTH"
                     else              -> "SOUTH"
-                }
+                })
                 spatialHash.move(e, oldX, oldY)
                 copy(entities = entities)
             }
         }
+        footstep?.let { eventBus.emit(it) }
     }
 
     fun spawnEntity(entity: Entity) {
@@ -211,37 +302,57 @@ class GameEngine {
         updateState {
             val newEntities = entities.toMutableMap()
             newEntities[entity.id] = entity
-            // Spawn = событие угрозы если враг
-            if (entity.hasFlag("ENEMY") || entity.hasFlag("HOSTILE")) {
-                eventBus.emit(WorldEvent(WorldEventType.THREAT,
-                    entity.x.toFloat(), entity.y.toFloat(), 0.8f, 200f, entity.id))
-            }
             copy(entities = newEntities)
+        }
+        // Spawn = событие угрозы если враг — после мутации, не внутри
+        if (entity.hasFlag("ENEMY") || entity.hasFlag("HOSTILE")) {
+            eventBus.emit(WorldEvent(WorldEventType.THREAT,
+                entity.x.toFloat(), entity.y.toFloat(), 0.8f, 200f, entity.id))
         }
     }
 
     fun applyDamage(targetName: String, amount: Int) {
+        var combatEvent: WorldEvent? = null
         updateState {
-            if (targetName.equals(player.name, ignoreCase = true)) {
+            if (targetName.equals(player.name, ignoreCase = true) || targetName == player.id) {
                 val died = player.applyDamage(amount)
-                if (died) logMessage("${player.name} has fallen!")
-                copy(player = player)
+                if (died) copy(player = player, battleLog = (battleLog + "${player.name} has fallen!").takeLast(200))
+                else copy(player = player)
             } else {
-                val target = entities.values.firstOrNull { it.name.equals(targetName, ignoreCase = true) }
+                val target = entities[targetName]
+                    ?: entities.values.firstOrNull { it.name.equals(targetName, ignoreCase = true) }
                     ?: return@updateState this
                 val died = target.applyDamage(amount)
                 if (died) {
                     spatialHash.remove(target)
-                    logMessage("${target.name} is defeated!")
                     copy(entities = entities.filter { it.key != target.id },
-                         battleLog = battleLog + "${target.name} is defeated!")
+                         battleLog = (battleLog + "${target.name} is defeated!").takeLast(200))
                 } else {
-                    // Враг будит союзников — COMBAT event
-                    eventBus.emit(WorldEvent(WorldEventType.COMBAT,
-                        target.x.toFloat(), target.y.toFloat(), 0.9f, 256f, target.id))
+                    // Враг будит союзников — COMBAT event (эмитится после мутации)
+                    combatEvent = WorldEvent(WorldEventType.COMBAT,
+                        target.x.toFloat(), target.y.toFloat(), 0.9f, 256f, target.id)
                     copy(entities = entities)
                 }
             }
+        }
+        combatEvent?.let { eventBus.emit(it) }
+    }
+
+    /**
+     * Подбор предмета с клетки (x,y). Уменьшает quantity, убирает предмет при 0
+     * и помечает сборщика флагом типа предмета — так Need считается удовлетворённой
+     * (BehaviourDecider ищет satisfiedByFlags среди флагов entity).
+     */
+    fun pickUpItemAt(x: Int, y: Int, type: String, by: Entity) {
+        updateState {
+            val item = items.values.firstOrNull {
+                it.x == x && it.y == y && it.type.equals(type, ignoreCase = true)
+            } ?: return@updateState this
+            item.quantity -= 1
+            by.addFlag(item.type.uppercase())
+            val msg = "${by.name} picks up ${item.type.lowercase()}."
+            val newItems = if (item.quantity <= 0) items.filter { it.key != item.id } else items
+            copy(items = newItems, battleLog = (battleLog + msg).takeLast(200))
         }
     }
 
@@ -275,9 +386,9 @@ class GameEngine {
         updateState {
             val newItems = items.toMutableMap()
             newItems[item.id] = item
-            eventBus.emit(WorldEvent(WorldEventType.ITEM_DROPPED, item.x.toFloat(), item.y.toFloat(), 0.5f, 128f))
             copy(items = newItems)
         }
+        eventBus.emit(WorldEvent(WorldEventType.ITEM_DROPPED, item.x.toFloat(), item.y.toFloat(), 0.5f, 128f))
     }
 
     fun emitCustomEvent(x: Float, y: Float, radius: Float, intensity: Float, payload: Map<String, Any> = emptyMap()) {
@@ -293,10 +404,66 @@ class GameEngine {
         logMessage(if (mode == GameMode.BATTLE) "⚔ Battle begins!" else "🌿 Back to the overworld.")
     }
 
+    /** Выпавшая грань кубика назначает активную Сестру (SPEC §15). */
+    fun setActiveSister(sister: Sister) {
+        updateState { copy(activeSister = sister) }
+        logMessage("The die settles on ${sister.face}. ${sister.displayName} takes the fore — ${sister.principle.display.lowercase()}.")
+    }
+
+    /**
+     * Переписывает закон мира (SPEC §19.2). Единственная точка мутации.
+     * Каждый NPC-агент увидит новый закон как ground truth со следующего
+     * пробуждения; волна WORLD_LAW_CHANGE будит всех немедленно.
+     */
+    fun setWorldLaw(newLaw: String) {
+        updateState { copy(worldLaw = newLaw) }
+        logMessage("Reality shifts: $newLaw")
+        eventBus.emit(WorldEvent(WorldEventType.CUSTOM, 0f, 0f,
+            intensity = 1f, radius = Float.MAX_VALUE,
+            payload = mapOf("type" to "WORLD_LAW_CHANGE")))
+    }
+
+    /** Локальный лор поселения — аддитивный, в отличие от глобального закона. */
+    fun setSettlementLore(settlementId: String, lore: String) {
+        updateState { copy(settlementLore = settlementLore + (settlementId to lore)) }
+    }
+
     fun currentState() = state
 
+    /** Отменяет все корутины движка (executePath и т.п.). После вызова engine мёртв. */
+    fun shutdown() {
+        scope.cancel()
+    }
+
+    /**
+     * Восстановление мира из сохранения (SPEC §3): состояние, постройки,
+     * пере-заселение spatialHash. worldMap держит ссылку на structureOverrides,
+     * поэтому clear+putAll сохраняет её валидной.
+     */
+    fun restore(newState: GameState, overrides: Map<Pair<Int, Int>, LayeredTileEx>) {
+        spatialHash.clear()
+        structureOverrides.clear()
+        structureOverrides.putAll(overrides)
+        spatialHash.insert(newState.player)
+        newState.entities.values.forEach { spatialHash.insert(it) }
+        updateState { newState }
+    }
+
     // ── Структуры (зиккураты, здания) от StructureDSL ─────────────────────────
+    // Единственный источник правды о постройках. IsoMap держит ссылку на эту
+    // же HashMap — applyStructure видна tileAt/isWalkable/Pathfinder мгновенно (SPEC §4/§5).
     val structureOverrides = HashMap<Pair<Int,Int>, LayeredTileEx>()
+
+    /**
+     * Живая карта мира. Рендерер пересобирает буфер вокруг игрока и передаёт
+     * сюда — Pathfinder и BehaviourExecutor всегда работают с актуальной картой.
+     */
+    var worldMap: IsoMap = generateMapAround(0, 0, overrides = structureOverrides)
+        private set
+
+    fun updateWorldMap(map: IsoMap) {
+        worldMap = map
+    }
 
     fun applyStructure(tiles: List<Triple<Int, Int, LayeredTileEx>>) {
         tiles.forEach { (c, r, t) -> structureOverrides[c to r] = t }
@@ -316,9 +483,11 @@ class GameEngine {
 
     fun selectTile(col: Int, row: Int, map: IsoMap) {
         val blocked = state.entities.values.map { it.col to it.row }.toSet()
+        // Активная Сестра ходит своей фигурой; без неё — обычный 4-way шаг (SPEC §19.4)
+        val pattern = state.activeSister?.currentPattern ?: MovementPattern.Walker
         val path = Pathfinder.findPath(
             state.player.col, state.player.row,
-            col, row, map, blocked
+            col, row, map, blocked, pattern
         )
         selectedTile = col to row
         currentPath = path ?: emptyList()
@@ -350,14 +519,31 @@ class GameEngine {
                              }
                 entity?.let {
                     val dir = prevStep?.let { p -> Pathfinder.stepDirection(p, step) } ?: "SOUTH"
-                    it.memory["direction"] = dir
+                    it.memory["direction"] = MemoryValue.Str(dir)
                     moveEntity(entityId, step.col - it.col, step.row - it.row)
                 }
                 prevStep = step
                 delay(msPerStep)
             }
+            checkPromotion(entityId)
             clearSelection()
             onDone?.invoke()
+        }
+    }
+
+    /**
+     * Промоушен Five (SPEC §19.5): пешка, дошедшая до края света, становится
+     * ферзём — постоянная смена currentPattern, не разовый тумблер.
+     */
+    private fun checkPromotion(entityId: String) {
+        val sister = state.activeSister ?: return
+        if (sister.currentPattern !is MovementPattern.Pawn) return
+        val p = state.player
+        if (entityId != p.id && !entityId.equals(p.name, ignoreCase = true)) return
+        if (PromotionZones.isPromotionZone(p.col, p.row, worldMap)) {
+            sister.currentPattern = MovementPattern.Queen
+            logMessage("${sister.displayName} reaches the edge of the world — and is transformed. She moves as a queen now.")
+            updateState { this }
         }
     }
 }

@@ -30,15 +30,33 @@ class SpatialHash(private val cellSize: Float = 64f) {
         insert(entity)
     }
 
-    /** Все entity в радиусе radius от точки (px, py). */
+    /**
+     * Все entity в радиусе radius от точки (px, py).
+     * Все координаты и радиусы — в grid units (SPEC §6): Entity.x/y, WorldEvent.x/y
+     * и radius живут в одном пространстве; пиксели появляются только в рендерере.
+     */
     fun query(px: Float, py: Float, radius: Float): List<Entity> {
         val result = mutableListOf<Entity>()
-        val r = (radius / cellSize).toInt() + 1
+        // clamp до переполнения: radius=MAX_VALUE сатурирует toLong(), 2*r+1 ушло бы в минус
+        val r = minOf((radius / cellSize).toLong() + 1, 1_000_000L)
+        // Мировые события (radius = MAX_VALUE, WORLD_LAW_CHANGE) покрывают больше
+        // ячеек, чем занято — дешевле обойти занятые, чем квадрат окна
+        if ((2 * r + 1) * (2 * r + 1) > cells.size) {
+            cells.values.forEach { list ->
+                list.forEach { e ->
+                    val ex = e.x - px
+                    val ey = e.y - py
+                    if (ex * ex + ey * ey <= radius * radius) result.add(e)
+                }
+            }
+            return result
+        }
+        val ri = r.toInt()
         val cx = cell(px); val cy = cell(py)
-        for (dx in -r..r) for (dy in -r..r) {
+        for (dx in -ri..ri) for (dy in -ri..ri) {
             cells[key(cx + dx, cy + dy)]?.forEach { e ->
-                val ex = e.x - px / cellSize * cellSize
-                val ey = e.y - py / cellSize * cellSize
+                val ex = e.x - px
+                val ey = e.y - py
                 if (ex * ex + ey * ey <= radius * radius) result.add(e)
             }
         }

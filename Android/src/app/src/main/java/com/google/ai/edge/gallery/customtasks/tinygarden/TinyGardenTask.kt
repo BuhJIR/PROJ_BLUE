@@ -16,8 +16,6 @@ import com.google.ai.edge.litertlm.Contents
 import com.google.ai.edge.litertlm.tool
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.flow.receiveAsFlow
 
 private const val SYSTEM_PROMPT =
   "Ты — Душа. Живой Мастер игры. Саркастичный, холодный, точный.\n" +
@@ -28,7 +26,12 @@ private const val SYSTEM_PROMPT =
   "- executeMove(target, direction, steps)\n" +
   "- executeDamage(target, amount)\n" +
   "- emitWorldEvent(x, y, radius, intensity)\n" +
-  "- bulkApplyFlag(matchFlags, removeGroup, addFlags)\n\n" +
+  "- bulkApplyFlag(matchFlags, removeGroup, addFlags)\n" +
+  "- buildStructure(dsl, x, y) — здание одной DSL-строкой: 'N×levels; stairs; non-trees; материал; flat|peak'.\n" +
+  "  Примеры DSL: '3×levels; stairs; stone; flat' (зиккурат-терраса), " +
+  "'5×levels; stairs; non-trees; stone; peak' (пирамида с вершиной), '1×levels; wood; flat' (помост).\n" +
+  "- rewriteWorldLaw(newLaw) — переписать закон мира. ТОЛЬКО для крупных сюжетных событий: " +
+  "артефакт гасит солнце, понятие никогда не существовало. Каждый NPC воспримет это как истину.\n\n" +
   "JSON команды:\n" +
   "{\"action\":\"SPAWN\",\"name\":\"Goblin\",\"hp\":20,\"x\":6,\"y\":4,\"flags\":[\"ENEMY\",\"AGGRESSIVE\"]}\n" +
   "{\"action\":\"SET_FLAG\",\"target\":\"Hero\",\"flag\":\"POISONED\",\"value\":true}\n" +
@@ -39,10 +42,9 @@ private const val SYSTEM_PROMPT =
   "NPC живут сами по флагам — не управляй каждым вручную.\n" +
   "Нарратив — по-русски. Команды — на английском."
 
-class TinyGardenTask @Inject constructor() : CustomTask {
-  private val _updateChannel = Channel<TinyGardenCommand>(Channel.BUFFERED)
-  private val commandFlow = _updateChannel.receiveAsFlow()
-  
+class TinyGardenTask @Inject constructor(
+  private val aiBridge: AiSoulBridge,
+) : CustomTask {
   override val task =
     Task(
       id = BuiltInTaskId.LLM_TINY_GARDEN,
@@ -69,13 +71,9 @@ class TinyGardenTask @Inject constructor() : CustomTask {
     systemInstruction: Contents?,
     onDone: (error: String) -> Unit,
   ) {
-    clearQueue()
-    // NOTE: aiBridge is created fresh per initialization to avoid stale engine refs
-    val freshBridge = com.google.ai.edge.litertlm.tool(
-      com.google.ai.edge.gallery.customtasks.tinygarden.AiSoulBridge(
-        com.google.ai.edge.gallery.customtasks.tinygarden.GameEngine()
-      )
-    )
+    // The singleton aiBridge wraps the singleton GameEngine — the same engine the
+    // renderer observes. Constructing a fresh engine here would give the model's
+    // tools a world no one ever sees (SPEC §1).
     LlmChatModelHelper.initialize(
       context = context,
       model = model,
@@ -84,7 +82,7 @@ class TinyGardenTask @Inject constructor() : CustomTask {
       supportAudio = false,
       onDone = onDone,
       systemInstruction = Contents.of(SYSTEM_PROMPT),
-      tools = listOf(freshBridge),
+      tools = listOf(tool(aiBridge)),
       enableConversationConstrainedDecoding = true,
     )
   }
@@ -95,7 +93,6 @@ class TinyGardenTask @Inject constructor() : CustomTask {
     model: Model,
     onDone: () -> Unit,
   ) {
-    clearQueue()
     LlmChatModelHelper.cleanUp(model = model, onDone = onDone)
   }
 
@@ -107,13 +104,8 @@ class TinyGardenTask @Inject constructor() : CustomTask {
       modelManagerViewModel = customTaskData.modelManagerViewModel,
       tools = listOf(),
       bottomPadding = customTaskData.bottomPadding,
-      commandFlow = commandFlow,
       setAppBarControlsDisabled = customTaskData.setAppBarControlsDisabled,
       setTopBarVisible = customTaskData.setTopBarVisible,
     )
-  }
-
-  private fun clearQueue() {
-    while (_updateChannel.tryReceive().isSuccess) {}
   }
 }

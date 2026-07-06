@@ -19,7 +19,7 @@ data class WorldEvent(
     val x: Float,
     val y: Float,
     val intensity: Float = 1f,       // 0..1, затухает с расстоянием
-    val radius: Float = 128f,        // пиксели / grid units
+    val radius: Float = 128f,        // grid units — единое пространство с Entity.x/y (SPEC §6)
     val sourceId: String? = null,    // кто вызвал
     val payload: Map<String, Any> = emptyMap(), // произвольные данные
 ) {

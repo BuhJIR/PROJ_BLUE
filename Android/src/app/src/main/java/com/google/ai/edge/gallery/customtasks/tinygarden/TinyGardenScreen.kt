@@ -47,7 +47,6 @@ import com.google.ai.edge.gallery.ui.common.chat.ChatSide
 import com.google.ai.edge.gallery.ui.modelmanager.ModelManagerViewModel
 import com.google.ai.edge.gallery.ui.theme.customColors
 import com.google.ai.edge.litertlm.ToolProvider
-import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.launch
 
 @Composable
@@ -58,7 +57,6 @@ fun TinyGardenScreen(
   bottomPadding: Dp,
   setAppBarControlsDisabled: (Boolean) -> Unit,
   setTopBarVisible: (Boolean) -> Unit,
-  commandFlow: Flow<TinyGardenCommand>, // kept for signature compatibility
   viewModel: TinyGardenViewModel = hiltViewModel(),
 ) {
   val uiState by viewModel.uiState.collectAsState()

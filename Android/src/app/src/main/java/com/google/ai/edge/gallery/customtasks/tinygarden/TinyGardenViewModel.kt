@@ -18,10 +18,14 @@ import com.google.ai.edge.litertlm.Content
 import com.google.ai.edge.litertlm.Contents
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import java.io.File
 import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -42,6 +46,9 @@ class TinyGardenViewModel
 constructor(
   @ApplicationContext private val context: Context,
   val dataStoreRepository: DataStoreRepository,
+  // Синглтоны из Hilt — тот же engine, к которому привязаны tool-вызовы модели (SPEC §1)
+  val engine: GameEngine,
+  val aiBridge: AiSoulBridge,
 ) : ViewModel() {
   protected val _uiState = MutableStateFlow(TinyGardenUiState())
   val uiState = _uiState.asStateFlow()
@@ -49,13 +56,32 @@ constructor(
   private val _isResettingConversation = MutableStateFlow(false)
   private val isResettingConversation = _isResettingConversation.asStateFlow()
 
-  val engine = GameEngine()          // публичный — IsoMapRenderer берёт отсюда
-  val aiBridge = AiSoulBridge(engine)
+  private val saveFile = File(context.filesDir, GameStatePersistence.SAVE_FILE_NAME)
+  private val saveTick = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
 
   init {
+      // Загрузка — один раз на жизнь синглтон-движка, до подписки observe (SPEC §3)
+      if (!engine.restoreAttempted) {
+          engine.restoreAttempted = true
+          GameStatePersistence.load(engine, saveFile)
+      }
       engine.observe { newState ->
           _uiState.update { it.copy(gameState = newState) }
+          saveTick.tryEmit(Unit)
       }
+      // Debounced autosave: пишем после 2 секунд тишины, не на каждый кадр
+      viewModelScope.launch(Dispatchers.IO) {
+          saveTick.collectLatest {
+              delay(2000)
+              GameStatePersistence.save(engine, saveFile)
+          }
+      }
+  }
+
+  override fun onCleared() {
+      // ViewModel уходит (навигация/процесс) — не полагаемся на debounce
+      GameStatePersistence.save(engine, saveFile)
+      super.onCleared()
   }
 
   fun getCommand(
@@ -80,17 +106,26 @@ constructor(
       val conversation = instance.conversation
       val contents = mutableListOf<Content>()
       if (instructionText.trim().isNotEmpty()) {
-        contents.add(Content.Text(instructionText))
+        // Активная Сестра окрашивает тон ответа Души — point-of-injection из SPEC §15:
+        // это контекст хода, не новая игровая логика
+        val activeSister = engine.currentState().activeSister
+        val augmented = if (activeSister != null) {
+          "$instructionText\n[Currently speaking through: ${activeSister.principle.display}]"
+        } else instructionText
+        contents.add(Content.Text(augmented))
       }
 
       try {
         val responseMessage = conversation.sendMessage(Contents.of(contents))
         val response = responseMessage.toString()
-        
-        if (response.trim().startsWith("{") && response.trim().endsWith("}")) {
-            aiBridge.processPureJson(response)
-        } else {
-            engine.logMessage("Soul: " + response)
+
+        // Команда может быть вшита в прозу — извлекаем первый {...} блок (SPEC §10)
+        val (jsonCommand, narrative) = SoulResponseParser.extractFirstJsonObject(response)
+        if (jsonCommand != null) {
+            aiBridge.processPureJson(jsonCommand)
+        }
+        if (narrative.isNotBlank()) {
+            engine.logMessage("Soul: $narrative")
         }
 
         addMessage(message = ChatMessageText(content = response, side = ChatSide.AGENT))
