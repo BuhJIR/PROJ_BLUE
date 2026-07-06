@@ -46,6 +46,20 @@ class AiSoulBridge(val engine: GameEngine) : ToolSet {
                             if (g.optBoolean("active", false)) e.addGroup(gName)
                         }
                     }
+                    // Нужды: [{"name":"HUNGER","priority":90,"satisfied_by":["FRUIT","FOOD"]}]
+                    json.optJSONArray("needs")?.let { arr ->
+                        for (i in 0 until arr.length()) {
+                            val n = arr.getJSONObject(i)
+                            val satisfied = n.optJSONArray("satisfied_by")?.let { sa ->
+                                (0 until sa.length()).map { sa.getString(it).uppercase() }.toSet()
+                            } ?: emptySet()
+                            e.needs.add(Need(n.optString("name", "NEED"), n.optInt("priority", 50), satisfied))
+                        }
+                    }
+                    // Дом: {"home":{"x":4,"y":7}} — TIRED поведёт entity сюда
+                    json.optJSONObject("home")?.let { h ->
+                        e.memory["home"] = MemoryValue.Coord(h.optInt("x", e.x), h.optInt("y", e.y))
+                    }
                     engine.spawnEntity(e)
                     Log.d(TAG, "Spawned: $entityName at ($x,$y)")
                 }

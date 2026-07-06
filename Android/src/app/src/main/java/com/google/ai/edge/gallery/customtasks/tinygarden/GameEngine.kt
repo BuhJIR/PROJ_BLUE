@@ -168,6 +168,11 @@ class GameEngine {
         }
     }
 
+    // Guard от каскадной рекурсии: A бьёт B → COMBAT-событие будит A снова.
+    // Пока entity исполняет поведение, повторное пробуждение только обновляет
+    // currentBehaviour, но не запускает второй execute (SPEC §2).
+    private val executingBehaviours = mutableSetOf<String>()
+
     private fun wakeEntity(entity: Entity, event: WorldEvent, strength: Float) {
         entity.isAwake = true
         val nearby = spatialHash.query(entity.x.toFloat(), entity.y.toFloat(), entity.interestRadius)
@@ -187,14 +192,43 @@ class GameEngine {
         if (newBehaviour !is Behaviour.Wander && newBehaviour !is Behaviour.Idle) {
             logMessage("${entity.name} → ${newBehaviour::class.simpleName}")
         }
+        // Решение → действие. Без этого вызова все Behaviour — тупики (SPEC §2).
+        if (executingBehaviours.add(entity.id)) {
+            try {
+                BehaviourExecutor.execute(entity, this)
+            } finally {
+                executingBehaviours.remove(entity.id)
+            }
+        }
         updateState { this }  // триггерим UI
+    }
+
+    // ── Резолверы для актуатора и инструментов ───────────────────────────────
+
+    /** Находит entity по id или имени; игрок включён. */
+    fun resolveEntity(idOrName: String): Entity? {
+        val p = state.player
+        if (idOrName == p.id || idOrName.equals(p.name, ignoreCase = true)) return p
+        return state.entities[idOrName]
+            ?: state.entities.values.firstOrNull { it.name.equals(idOrName, ignoreCase = true) }
+    }
+
+    /** Занятые клетки (entity + игрок), кроме перечисленных id. */
+    fun occupiedCells(except: Set<String> = emptySet()): Set<Pair<Int, Int>> {
+        val cells = mutableSetOf<Pair<Int, Int>>()
+        if (state.player.id !in except) cells.add(state.player.col to state.player.row)
+        state.entities.values.forEach { if (it.id !in except) cells.add(it.col to it.row) }
+        return cells
     }
 
     // ── Public API для ИИ и игрока ───────────────────────────────────────────
 
     fun moveEntity(entityId: String, dx: Int, dy: Int) {
+        // События эмитим ПОСЛЕ завершения мутации: emit внутри лямбды updateState
+        // запускает вложенные мутации, результат которых внешняя лямбда затирает.
+        var footstep: WorldEvent? = null
         updateState {
-            if (entityId.equals(player.name, ignoreCase = true)) {
+            if (entityId.equals(player.name, ignoreCase = true) || entityId == player.id) {
                 val oldX = player.x; val oldY = player.y
                 val newPlayer = player.apply {
                     x += dx; y += dy
@@ -207,7 +241,7 @@ class GameEngine {
                     })
                 }
                 spatialHash.move(newPlayer, oldX, oldY)
-                eventBus.emit(WorldEvent(WorldEventType.FOOTSTEP, newPlayer.x.toFloat(), newPlayer.y.toFloat(), 0.4f, 96f, "player"))
+                footstep = WorldEvent(WorldEventType.FOOTSTEP, newPlayer.x.toFloat(), newPlayer.y.toFloat(), 0.4f, 96f, "player")
                 copy(player = newPlayer)
             } else {
                 val e = entities[entityId] ?: return@updateState this
@@ -223,6 +257,7 @@ class GameEngine {
                 copy(entities = entities)
             }
         }
+        footstep?.let { eventBus.emit(it) }
     }
 
     fun spawnEntity(entity: Entity) {
@@ -230,37 +265,57 @@ class GameEngine {
         updateState {
             val newEntities = entities.toMutableMap()
             newEntities[entity.id] = entity
-            // Spawn = событие угрозы если враг
-            if (entity.hasFlag("ENEMY") || entity.hasFlag("HOSTILE")) {
-                eventBus.emit(WorldEvent(WorldEventType.THREAT,
-                    entity.x.toFloat(), entity.y.toFloat(), 0.8f, 200f, entity.id))
-            }
             copy(entities = newEntities)
+        }
+        // Spawn = событие угрозы если враг — после мутации, не внутри
+        if (entity.hasFlag("ENEMY") || entity.hasFlag("HOSTILE")) {
+            eventBus.emit(WorldEvent(WorldEventType.THREAT,
+                entity.x.toFloat(), entity.y.toFloat(), 0.8f, 200f, entity.id))
         }
     }
 
     fun applyDamage(targetName: String, amount: Int) {
+        var combatEvent: WorldEvent? = null
         updateState {
-            if (targetName.equals(player.name, ignoreCase = true)) {
+            if (targetName.equals(player.name, ignoreCase = true) || targetName == player.id) {
                 val died = player.applyDamage(amount)
-                if (died) logMessage("${player.name} has fallen!")
-                copy(player = player)
+                if (died) copy(player = player, battleLog = (battleLog + "${player.name} has fallen!").takeLast(200))
+                else copy(player = player)
             } else {
-                val target = entities.values.firstOrNull { it.name.equals(targetName, ignoreCase = true) }
+                val target = entities[targetName]
+                    ?: entities.values.firstOrNull { it.name.equals(targetName, ignoreCase = true) }
                     ?: return@updateState this
                 val died = target.applyDamage(amount)
                 if (died) {
                     spatialHash.remove(target)
-                    logMessage("${target.name} is defeated!")
                     copy(entities = entities.filter { it.key != target.id },
-                         battleLog = battleLog + "${target.name} is defeated!")
+                         battleLog = (battleLog + "${target.name} is defeated!").takeLast(200))
                 } else {
-                    // Враг будит союзников — COMBAT event
-                    eventBus.emit(WorldEvent(WorldEventType.COMBAT,
-                        target.x.toFloat(), target.y.toFloat(), 0.9f, 256f, target.id))
+                    // Враг будит союзников — COMBAT event (эмитится после мутации)
+                    combatEvent = WorldEvent(WorldEventType.COMBAT,
+                        target.x.toFloat(), target.y.toFloat(), 0.9f, 256f, target.id)
                     copy(entities = entities)
                 }
             }
+        }
+        combatEvent?.let { eventBus.emit(it) }
+    }
+
+    /**
+     * Подбор предмета с клетки (x,y). Уменьшает quantity, убирает предмет при 0
+     * и помечает сборщика флагом типа предмета — так Need считается удовлетворённой
+     * (BehaviourDecider ищет satisfiedByFlags среди флагов entity).
+     */
+    fun pickUpItemAt(x: Int, y: Int, type: String, by: Entity) {
+        updateState {
+            val item = items.values.firstOrNull {
+                it.x == x && it.y == y && it.type.equals(type, ignoreCase = true)
+            } ?: return@updateState this
+            item.quantity -= 1
+            by.addFlag(item.type.uppercase())
+            val msg = "${by.name} picks up ${item.type.lowercase()}."
+            val newItems = if (item.quantity <= 0) items.filter { it.key != item.id } else items
+            copy(items = newItems, battleLog = (battleLog + msg).takeLast(200))
         }
     }
 
@@ -294,9 +349,9 @@ class GameEngine {
         updateState {
             val newItems = items.toMutableMap()
             newItems[item.id] = item
-            eventBus.emit(WorldEvent(WorldEventType.ITEM_DROPPED, item.x.toFloat(), item.y.toFloat(), 0.5f, 128f))
             copy(items = newItems)
         }
+        eventBus.emit(WorldEvent(WorldEventType.ITEM_DROPPED, item.x.toFloat(), item.y.toFloat(), 0.5f, 128f))
     }
 
     fun emitCustomEvent(x: Float, y: Float, radius: Float, intensity: Float, payload: Map<String, Any> = emptyMap()) {
