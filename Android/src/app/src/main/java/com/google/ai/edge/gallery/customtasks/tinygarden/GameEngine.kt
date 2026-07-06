@@ -99,6 +99,10 @@ class Entity(
 
 enum class GameMode { OVERWORLD, BATTLE }
 
+/** Закон мира по умолчанию — то, что каждый NPC считает истиной (SPEC §19.2). */
+const val DEFAULT_WORLD_LAW =
+    "A world of quiet fields and old stone. The sun rises and sets as it always has."
+
 /** Глобальный State — иммутабельный снимок мира для Compose. */
 data class GameState(
     val mode: GameMode = GameMode.OVERWORLD,
@@ -109,6 +113,10 @@ data class GameState(
     val turn: Int = 0,
     // Сестра, чья грань выпала последней — активный голос/актёр (SPEC §15)
     val activeSister: Sister? = null,
+    // Закон мира: глобальная, исключающая истина; переписывается редко (SPEC §19.2)
+    val worldLaw: String = DEFAULT_WORLD_LAW,
+    // Локальный, аддитивный лор поселений: ключ — id региона/поселения
+    val settlementLore: Map<String, String> = emptyMap(),
 ) {
     fun getEnemies() = entities.values.filter { it.hasFlag("ENEMY") }
     fun getLiving() = entities.values.filter { it.isAlive() }
@@ -175,20 +183,41 @@ class GameEngine {
     // currentBehaviour, но не запускает второй execute (SPEC §2).
     private val executingBehaviours = mutableSetOf<String>()
 
+    // Профили значимых NPC — только они эскалируют до микро-агента (SPEC §19.3)
+    val npcProfiles = HashMap<String, NpcAgentProfile>()
+
+    fun registerNpcProfile(profile: NpcAgentProfile) {
+        npcProfiles[profile.entityId] = profile
+    }
+
     private fun wakeEntity(entity: Entity, event: WorldEvent, strength: Float) {
         entity.isAwake = true
         val nearby = spatialHash.query(entity.x.toFloat(), entity.y.toFloat(), entity.interestRadius)
+            .filter { it.id != entity.id }
         val nearbyItems = state.items.values.filter { item ->
             val dx = (item.x - entity.x).toFloat()
             val dy = (item.y - entity.y).toFloat()
             sqrt(dx * dx + dy * dy) <= entity.interestRadius
         }
-        val newBehaviour = BehaviourDecider.decide(
-            entity = entity,
-            nearbyEntities = nearby.filter { it.id != entity.id },
-            nearbyItems = nearbyItems,
-            event = event,
-        )
+        val profile = npcProfiles[entity.id]
+        if (profile?.usesMicroAgent == true) {
+            // Значимый NPC — собственный момент мысли, асинхронно; при любом
+            // сбое NpcAgentRunner сам откатывается на детерминированный путь
+            scope.launch {
+                val decided = NpcAgentRunner.resolveBehaviour(
+                    entity, profile, this@GameEngine, nearby, nearbyItems, event,
+                )
+                applyDecidedBehaviour(entity, decided)
+            }
+        } else {
+            applyDecidedBehaviour(
+                entity,
+                BehaviourDecider.decide(entity, nearby, nearbyItems, event),
+            )
+        }
+    }
+
+    private fun applyDecidedBehaviour(entity: Entity, newBehaviour: Behaviour) {
         entity.currentBehaviour = newBehaviour
         // Логируем только интересное поведение
         if (newBehaviour !is Behaviour.Wander && newBehaviour !is Behaviour.Idle) {
@@ -373,6 +402,24 @@ class GameEngine {
     fun setActiveSister(sister: Sister) {
         updateState { copy(activeSister = sister) }
         logMessage("The die settles on ${sister.face}. ${sister.displayName} takes the fore — ${sister.principle.display.lowercase()}.")
+    }
+
+    /**
+     * Переписывает закон мира (SPEC §19.2). Единственная точка мутации.
+     * Каждый NPC-агент увидит новый закон как ground truth со следующего
+     * пробуждения; волна WORLD_LAW_CHANGE будит всех немедленно.
+     */
+    fun setWorldLaw(newLaw: String) {
+        updateState { copy(worldLaw = newLaw) }
+        logMessage("Reality shifts: $newLaw")
+        eventBus.emit(WorldEvent(WorldEventType.CUSTOM, 0f, 0f,
+            intensity = 1f, radius = Float.MAX_VALUE,
+            payload = mapOf("type" to "WORLD_LAW_CHANGE")))
+    }
+
+    /** Локальный лор поселения — аддитивный, в отличие от глобального закона. */
+    fun setSettlementLore(settlementId: String, lore: String) {
+        updateState { copy(settlementLore = settlementLore + (settlementId to lore)) }
     }
 
     fun currentState() = state

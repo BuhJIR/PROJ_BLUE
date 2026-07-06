@@ -103,6 +103,16 @@ class AiSoulBridge(val engine: GameEngine) : ToolSet {
                     json.optJSONObject("home")?.let { h ->
                         e.memory["home"] = MemoryValue.Coord(h.optInt("x", e.x), h.optInt("y", e.y))
                     }
+                    // Поселение — ключ в settlementLore для промпта микро-агента (SPEC §19.3)
+                    json.optString("settlement").takeIf { it.isNotEmpty() }?.let {
+                        e.memory["settlement"] = MemoryValue.Str(it)
+                    }
+                    // Роль — NPC становится микро-агентом с собственным моментом мысли
+                    json.optString("role").takeIf { it.isNotEmpty() }?.let { role ->
+                        engine.registerNpcProfile(
+                            NpcAgentProfile(entityId = e.id, localRole = role, usesMicroAgent = true)
+                        )
+                    }
                     engine.spawnEntity(e)
                     Log.d(TAG, "Spawned: $entityName at ($x,$y)")
                 }
@@ -155,6 +165,19 @@ class AiSoulBridge(val engine: GameEngine) : ToolSet {
                     val target = json.optString("target")
                     val amount = json.optInt("amount", 0)
                     engine.applyDamage(target, amount)
+                }
+
+                "WORLD_LAW" -> {
+                    // {"action":"WORLD_LAW","law":"The sun has gone out. Darkness is permanent."}
+                    val law = json.optString("law")
+                    if (law.isNotEmpty()) engine.setWorldLaw(law)
+                }
+
+                "SETTLEMENT_LORE" -> {
+                    // {"action":"SETTLEMENT_LORE","id":"riverside_village","lore":"Here, Three is honoured above all."}
+                    val id = json.optString("id")
+                    val lore = json.optString("lore")
+                    if (id.isNotEmpty() && lore.isNotEmpty()) engine.setSettlementLore(id, lore)
                 }
 
                 else -> engine.logMessage("Soul whispers: ${jsonString.take(120)}")
@@ -214,6 +237,19 @@ class AiSoulBridge(val engine: GameEngine) : ToolSet {
         val spec = StructureParser.parse(dsl)
         StructureGenerator.applyToEngine(spec, x, y, engine)
         return mapOf("result" to "success", "levels" to spec.levels, "material" to spec.material.name)
+    }
+
+    @Tool(description = "Rewrite the fundamental law of the world. Use only for major plot events that " +
+        "change reality itself for every inhabitant simultaneously — e.g. an artefact extinguishing the sun, " +
+        "a plague of silence, the invention of fire. Every NPC agent will perceive this as ground truth " +
+        "from their next wake cycle. This is not a flag on one entity — it rewrites what all entities believe " +
+        "to be true about existence.")
+    fun rewriteWorldLaw(
+        @ToolParam(description = "The new law, written as a short declarative statement of fact, " +
+            "e.g. 'The sun has gone out. Darkness is permanent. No one remembers warmth.'") newLaw: String,
+    ): Map<String, Any> {
+        engine.setWorldLaw(newLaw)
+        return mapOf("result" to "success", "law" to newLaw)
     }
 
     @Tool(description = "Apply a flag to all entities matching given flag conditions. Use for group events like festivals.")
