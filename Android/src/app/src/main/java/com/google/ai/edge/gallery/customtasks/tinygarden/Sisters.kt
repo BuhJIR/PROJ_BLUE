@@ -24,6 +24,9 @@ data class Sister(
     val spriteBase: String,             // "hero_white", "hero_ice", "sister_3".."sister_6"
     var isCompanion: Boolean = true,    // членство в партии переключается в рантайме
     var entityRef: String? = null,      // Entity.id, когда заспавнена как компаньон
+    // Как она ходит по земле (SPEC §19.4). Промоушен Five — постоянная замена
+    // паттерна на Queen, как в настоящих шахматах (SPEC §19.5)
+    var currentPattern: MovementPattern = MovementPattern.Walker,
 ) {
     val displayName: String get() = id.replaceFirstChar { it.uppercase() }
 }
@@ -106,13 +109,18 @@ val SISTER_PROFILES: Map<String, SisterAbilityProfile> = mapOf(
 
 /** Реестр шести Сестёр и кубик по умолчанию. */
 object Sisters {
+    // Подтверждённые фигуры: One — King, Five — Pawn, Six — Queen (SPEC §19.4).
+    // Two/Three/Four — слоты Knight/Bishop/Rook зарезервированы, пока Walker.
     val ALL: List<Sister> = listOf(
-        Sister(1, "one",   SisterPrinciple.EGO,         "hero_white"),
+        Sister(1, "one",   SisterPrinciple.EGO,         "hero_white",
+               currentPattern = MovementPattern.King),
         Sister(2, "two",   SisterPrinciple.COOPERATION, "hero_ice"),
         Sister(3, "three", SisterPrinciple.HARMONY,     "sister_3"),
         Sister(4, "four",  SisterPrinciple.SACRIFICE,   "sister_4"),
-        Sister(5, "five",  SisterPrinciple.CREATION,    "sister_5"),
-        Sister(6, "six",   SisterPrinciple.DUALITY,     "sister_6"),
+        Sister(5, "five",  SisterPrinciple.CREATION,    "sister_5",
+               currentPattern = MovementPattern.Pawn()),
+        Sister(6, "six",   SisterPrinciple.DUALITY,     "sister_6",
+               currentPattern = MovementPattern.Queen),
     )
 
     fun byId(id: String): Sister? = ALL.firstOrNull { it.id.equals(id, ignoreCase = true) }

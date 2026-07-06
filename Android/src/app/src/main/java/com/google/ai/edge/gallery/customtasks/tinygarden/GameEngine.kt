@@ -463,9 +463,11 @@ class GameEngine {
 
     fun selectTile(col: Int, row: Int, map: IsoMap) {
         val blocked = state.entities.values.map { it.col to it.row }.toSet()
+        // Активная Сестра ходит своей фигурой; без неё — обычный 4-way шаг (SPEC §19.4)
+        val pattern = state.activeSister?.currentPattern ?: MovementPattern.Walker
         val path = Pathfinder.findPath(
             state.player.col, state.player.row,
-            col, row, map, blocked
+            col, row, map, blocked, pattern
         )
         selectedTile = col to row
         currentPath = path ?: emptyList()
@@ -503,8 +505,25 @@ class GameEngine {
                 prevStep = step
                 delay(msPerStep)
             }
+            checkPromotion(entityId)
             clearSelection()
             onDone?.invoke()
+        }
+    }
+
+    /**
+     * Промоушен Five (SPEC §19.5): пешка, дошедшая до края света, становится
+     * ферзём — постоянная смена currentPattern, не разовый тумблер.
+     */
+    private fun checkPromotion(entityId: String) {
+        val sister = state.activeSister ?: return
+        if (sister.currentPattern !is MovementPattern.Pawn) return
+        val p = state.player
+        if (entityId != p.id && !entityId.equals(p.name, ignoreCase = true)) return
+        if (PromotionZones.isPromotionZone(p.col, p.row, worldMap)) {
+            sister.currentPattern = MovementPattern.Queen
+            logMessage("${sister.displayName} reaches the edge of the world — and is transformed. She moves as a queen now.")
+            updateState { this }
         }
     }
 }
