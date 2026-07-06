@@ -34,6 +34,17 @@ abstract class GameObject(
 }
 
 /**
+ * Типизированное значение в памяти Entity.
+ * Sealed-обёртка вместо Any: без unchecked-кастов и сериализуется в JSON (SPEC §3, §9).
+ */
+sealed class MemoryValue {
+    data class Str(val v: String) : MemoryValue()
+    data class Num(val v: Double) : MemoryValue()
+    data class Coord(val col: Int, val row: Int) : MemoryValue()
+    data class Bool(val v: Boolean) : MemoryValue()
+}
+
+/**
  * Entity — живой объект мира: герой, NPC, монстр.
  * Содержит нужды, память, поведение и радиус интереса.
  */
@@ -52,9 +63,16 @@ class Entity(
     var row: Int get() = y; set(v) { y = v }
 
     val needs: MutableList<Need> = mutableListOf()
-    val memory: MutableMap<String, Any> = mutableMapOf()
+    val memory: MutableMap<String, MemoryValue> = mutableMapOf()
     var currentBehaviour: Behaviour = Behaviour.Idle
     var isAwake: Boolean = true
+
+    // Типобезопасные читатели памяти — единственный способ достать значение
+    fun memoryString(key: String): String? = (memory[key] as? MemoryValue.Str)?.v
+    fun memoryNum(key: String): Double? = (memory[key] as? MemoryValue.Num)?.v
+    fun memoryCoord(key: String): Pair<Int, Int>? =
+        (memory[key] as? MemoryValue.Coord)?.let { it.col to it.row }
+    fun memoryBool(key: String): Boolean? = (memory[key] as? MemoryValue.Bool)?.v
 
     /** Нанести урон. Возвращает true если entity умер. */
     fun applyDamage(amount: Int): Boolean {
@@ -181,12 +199,12 @@ class GameEngine {
                 val newPlayer = player.apply {
                     x += dx; y += dy
                     // Обновляем направление для рендерера
-                    memory["direction"] = when {
+                    memory["direction"] = MemoryValue.Str(when {
                         dx > 0 && dy == 0 -> "EAST"
                         dx < 0 && dy == 0 -> "WEST"
                         dy < 0            -> "NORTH"
                         else              -> "SOUTH"
-                    }
+                    })
                 }
                 spatialHash.move(newPlayer, oldX, oldY)
                 eventBus.emit(WorldEvent(WorldEventType.FOOTSTEP, newPlayer.x.toFloat(), newPlayer.y.toFloat(), 0.4f, 96f, "player"))
@@ -195,12 +213,12 @@ class GameEngine {
                 val e = entities[entityId] ?: return@updateState this
                 val oldX = e.x; val oldY = e.y
                 e.x += dx; e.y += dy
-                e.memory["direction"] = when {
+                e.memory["direction"] = MemoryValue.Str(when {
                     dx > 0 && dy == 0 -> "EAST"
                     dx < 0 && dy == 0 -> "WEST"
                     dy < 0            -> "NORTH"
                     else              -> "SOUTH"
-                }
+                })
                 spatialHash.move(e, oldX, oldY)
                 copy(entities = entities)
             }
@@ -356,7 +374,7 @@ class GameEngine {
                              }
                 entity?.let {
                     val dir = prevStep?.let { p -> Pathfinder.stepDirection(p, step) } ?: "SOUTH"
-                    it.memory["direction"] = dir
+                    it.memory["direction"] = MemoryValue.Str(dir)
                     moveEntity(entityId, step.col - it.col, step.row - it.row)
                 }
                 prevStep = step

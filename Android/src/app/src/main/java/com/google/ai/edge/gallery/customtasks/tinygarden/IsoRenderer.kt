@@ -283,7 +283,7 @@ fun IsoMapRenderer(
             val sy    = cy + iso.y
             val isPlayer = entity.id == gameState.player.id
 
-            val dirStr = entity.memory["direction"] as? String ?: "SOUTH"
+            val dirStr = entity.memoryString("direction") ?: "SOUTH"
             val dir    = runCatching { Direction.valueOf(dirStr) }.getOrDefault(Direction.SOUTH)
             val key    = spritePath(if (isPlayer) "sister_3" else entity.name, dir)
             val sheet  = SpriteCache.load(context, key)
