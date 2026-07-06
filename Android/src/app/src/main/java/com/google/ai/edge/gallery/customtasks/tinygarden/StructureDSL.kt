@@ -93,27 +93,11 @@ object StructureGenerator {
     ): List<Triple<Int, Int, LayeredTileEx>> {
         val result = mutableListOf<Triple<Int, Int, LayeredTileEx>>()
 
+        // Тело зиккурата: полные квадраты, каждый ярус уже предыдущего
         for (level in 0 until spec.levels) {
             val size = baseSize - level * margin * 2
             if (size <= 0) break
-            val half = size / 2
-            val height = level
-
-            for (dr in -half..half) {
-                for (dc in -half..half) {
-                    val isEdge = dr == -half || dr == half || dc == -half || dc == half
-                    // На верхнем ярусе, если flatTop — заливаем всё; иначе только край (пик)
-                    val shouldPlace = if (level == spec.levels - 1 && !spec.flatTop) {
-                        isEdge || (dr == 0 && dc == 0)
-                    } else true
-
-                    if (shouldPlace) {
-                        val wc = centerCol + dc
-                        val wr = centerRow + dr
-                        result.add(Triple(wc, wr, LayeredTileEx(spec.material, height)))
-                    }
-                }
-            }
+            placeSquare(result, spec.material, centerCol, centerRow, size, level)
 
             // Ступени — на каждой границе ярусов, по центру одной из сторон
             if (spec.hasStairs && level > 0) {
@@ -130,7 +114,34 @@ object StructureGenerator {
             }
         }
 
+        // Пик (SPEC §12): не кольцо с точкой, а настоящее сужение — продолжаем
+        // ставить уменьшающиеся квадраты над телом, пока не сойдёмся к колонне 1×1.
+        // Поздние тайлы перекрывают ранние на тех же клетках — вершина выигрывает.
+        if (!spec.flatTop) {
+            var level = spec.levels
+            var size = baseSize - spec.levels * margin * 2
+            while (size >= 1) {
+                placeSquare(result, spec.material, centerCol, centerRow, size, level)
+                size -= margin * 2
+                level++
+            }
+        }
+
         return result
+    }
+
+    private fun placeSquare(
+        result: MutableList<Triple<Int, Int, LayeredTileEx>>,
+        material: TileType,
+        centerCol: Int, centerRow: Int,
+        size: Int, height: Int,
+    ) {
+        val half = size / 2
+        for (dr in -half..half) {
+            for (dc in -half..half) {
+                result.add(Triple(centerCol + dc, centerRow + dr, LayeredTileEx(material, height)))
+            }
+        }
     }
 
     /** Применяет сгенерированную структуру к живой карте движка. */
