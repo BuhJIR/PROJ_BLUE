@@ -39,7 +39,9 @@ private const val SYSTEM_PROMPT =
   "NPC живут сами по флагам — не управляй каждым вручную.\n" +
   "Нарратив — по-русски. Команды — на английском."
 
-class TinyGardenTask @Inject constructor() : CustomTask {
+class TinyGardenTask @Inject constructor(
+  private val aiBridge: AiSoulBridge,
+) : CustomTask {
   private val _updateChannel = Channel<TinyGardenCommand>(Channel.BUFFERED)
   private val commandFlow = _updateChannel.receiveAsFlow()
   
@@ -70,12 +72,9 @@ class TinyGardenTask @Inject constructor() : CustomTask {
     onDone: (error: String) -> Unit,
   ) {
     clearQueue()
-    // NOTE: aiBridge is created fresh per initialization to avoid stale engine refs
-    val freshBridge = com.google.ai.edge.litertlm.tool(
-      com.google.ai.edge.gallery.customtasks.tinygarden.AiSoulBridge(
-        com.google.ai.edge.gallery.customtasks.tinygarden.GameEngine()
-      )
-    )
+    // The singleton aiBridge wraps the singleton GameEngine — the same engine the
+    // renderer observes. Constructing a fresh engine here would give the model's
+    // tools a world no one ever sees (SPEC §1).
     LlmChatModelHelper.initialize(
       context = context,
       model = model,
@@ -84,7 +83,7 @@ class TinyGardenTask @Inject constructor() : CustomTask {
       supportAudio = false,
       onDone = onDone,
       systemInstruction = Contents.of(SYSTEM_PROMPT),
-      tools = listOf(freshBridge),
+      tools = listOf(tool(aiBridge)),
       enableConversationConstrainedDecoding = true,
     )
   }

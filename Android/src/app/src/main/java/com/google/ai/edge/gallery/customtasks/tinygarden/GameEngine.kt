@@ -6,6 +6,7 @@ import kotlin.math.abs
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 
@@ -294,6 +295,11 @@ class GameEngine {
     }
 
     fun currentState() = state
+
+    /** Отменяет все корутины движка (executePath и т.п.). После вызова engine мёртв. */
+    fun shutdown() {
+        scope.cancel()
+    }
 
     // ── Структуры (зиккураты, здания) от StructureDSL ─────────────────────────
     val structureOverrides = HashMap<Pair<Int,Int>, LayeredTileEx>()

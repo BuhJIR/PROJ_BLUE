@@ -21,13 +21,28 @@ import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
 import dagger.multibindings.IntoSet
+import javax.inject.Singleton
 
 @Module
 @InstallIn(SingletonComponent::class)
 internal object TinyGardenTaskModule {
+  // GameEngine/AiSoulBridge are singletons so the model's tool set, the renderer
+  // and the ViewModel all mutate/observe the same world (SPEC §1).
+  @Provides
+  @Singleton
+  fun provideGameEngine(): GameEngine {
+    return GameEngine()
+  }
+
+  @Provides
+  @Singleton
+  fun provideAiSoulBridge(engine: GameEngine): AiSoulBridge {
+    return AiSoulBridge(engine)
+  }
+
   @Provides
   @IntoSet
-  fun provideTask(): CustomTask {
-    return TinyGardenTask()
+  fun provideTask(aiBridge: AiSoulBridge): CustomTask {
+    return TinyGardenTask(aiBridge)
   }
 }

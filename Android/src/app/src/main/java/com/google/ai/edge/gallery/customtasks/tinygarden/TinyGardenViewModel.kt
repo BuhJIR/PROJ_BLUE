@@ -42,15 +42,15 @@ class TinyGardenViewModel
 constructor(
   @ApplicationContext private val context: Context,
   val dataStoreRepository: DataStoreRepository,
+  // Синглтоны из Hilt — тот же engine, к которому привязаны tool-вызовы модели (SPEC §1)
+  val engine: GameEngine,
+  val aiBridge: AiSoulBridge,
 ) : ViewModel() {
   protected val _uiState = MutableStateFlow(TinyGardenUiState())
   val uiState = _uiState.asStateFlow()
 
   private val _isResettingConversation = MutableStateFlow(false)
   private val isResettingConversation = _isResettingConversation.asStateFlow()
-
-  val engine = GameEngine()          // публичный — IsoMapRenderer берёт отсюда
-  val aiBridge = AiSoulBridge(engine)
 
   init {
       engine.observe { newState ->
