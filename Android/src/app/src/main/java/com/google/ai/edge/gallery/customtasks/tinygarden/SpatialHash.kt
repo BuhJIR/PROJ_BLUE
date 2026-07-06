@@ -37,7 +37,8 @@ class SpatialHash(private val cellSize: Float = 64f) {
      */
     fun query(px: Float, py: Float, radius: Float): List<Entity> {
         val result = mutableListOf<Entity>()
-        val r = (radius / cellSize).toLong() + 1
+        // clamp до переполнения: radius=MAX_VALUE сатурирует toLong(), 2*r+1 ушло бы в минус
+        val r = minOf((radius / cellSize).toLong() + 1, 1_000_000L)
         // Мировые события (radius = MAX_VALUE, WORLD_LAW_CHANGE) покрывают больше
         // ячеек, чем занято — дешевле обойти занятые, чем квадрат окна
         if ((2 * r + 1) * (2 * r + 1) > cells.size) {
