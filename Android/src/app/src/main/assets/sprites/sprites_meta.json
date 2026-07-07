@@ -9,9 +9,9 @@
   },
   "sprite_dirs": ["south","north","west","east"],
   "sprite_frames": {
-    "hero_white": { "frameW": 208, "frameH": 309, "frames": 45, "fps": 12 },
+    "hero_white": { "frameW": 245, "frameH": 309, "frames": 45, "fps": 12 },
     "hero_ice":   { "frameW": 259, "frameH": 311, "frames": 35, "fps": 12 },
-    "sister_3":   { "frameW": 208, "frameH": 332, "frames": 35, "fps": 12 },
+    "sister_3":   { "frameW": 267, "frameH": 332, "frames": 35, "fps": 12 },
     "sister_4":   { "frameW": 266, "frameH": 332, "frames": 35, "fps": 12 },
     "sister_5":   { "frameW": 265, "frameH": 332, "frames": 36, "fps": 12 },
     "sister_6":   { "frameW": 254, "frameH": 313, "frames": 36, "fps": 12 }

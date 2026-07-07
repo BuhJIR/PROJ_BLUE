@@ -1,7 +1,6 @@
 package com.google.ai.edge.gallery.customtasks.tinygarden
 
 import android.content.Context
-import android.graphics.BitmapFactory
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -152,49 +151,42 @@ fun generateMapAround(
     return IsoMap(cols, rows, centerCol, centerRow, tiles, overrides)
 }
 
-// ── Sprite cache ───────────────────────────────────────────────────────────────
-object SpriteCache {
-    private val cache = HashMap<String, ImageBitmap?>()
-    fun load(context: Context, assetPath: String): ImageBitmap? {
-        cache[assetPath]?.let { return it }
-        return try {
-            context.assets.open(assetPath).use { BitmapFactory.decodeStream(it)?.asImageBitmap() }
-                .also { cache[assetPath] = it }
-        } catch (e: Exception) { null }
-    }
-}
-
 // ── Направления ───────────────────────────────────────────────────────────────
 enum class Direction { SOUTH, NORTH, WEST, EAST }
 
-fun spritePath(charName: String, dir: Direction): String {
-    val base = when {
-        charName.contains("skull",    ignoreCase = true) -> "sprites/enemy_skull"
-        charName.contains("red",      ignoreCase = true) -> "sprites/enemy_red"
-        charName.contains("ice",      ignoreCase = true) -> "sprites/hero_ice"
-        charName.contains("sister_4", ignoreCase = true) -> "sprites/sister_4"
-        charName.contains("sister_5", ignoreCase = true) -> "sprites/sister_5"
-        charName.contains("sister_6", ignoreCase = true) -> "sprites/sister_6"
-        charName.contains("sister_3", ignoreCase = true) ||
-        charName.equals("Hero",       ignoreCase = true) -> "sprites/sister_3"
-        else -> "sprites/hero_white"
-    }
-    return "${base}_${dir.name.lowercase()}.png"
+/** Базовое имя листа для персонажа — ключ в sprites_meta.json. */
+fun spriteBase(charName: String): String = when {
+    charName.contains("skull",    ignoreCase = true) -> "sprites/enemy_skull"
+    charName.contains("red",      ignoreCase = true) -> "sprites/enemy_red"
+    charName.contains("ice",      ignoreCase = true) -> "sprites/hero_ice"
+    charName.contains("sister_4", ignoreCase = true) -> "sprites/sister_4"
+    charName.contains("sister_5", ignoreCase = true) -> "sprites/sister_5"
+    charName.contains("sister_6", ignoreCase = true) -> "sprites/sister_6"
+    charName.contains("sister_3", ignoreCase = true) ||
+    charName.equals("Hero",       ignoreCase = true) -> "sprites/sister_3"
+    else -> "sprites/hero_white"
 }
 
+fun spritePath(charName: String, dir: Direction): String =
+    "${spriteBase(charName)}_${dir.name.lowercase()}.png"
+
 // ── Анимация ───────────────────────────────────────────────────────────────────
+/**
+ * Общие часы анимации, квантованные до 12 Гц: у листов разный fps (2 у врагов,
+ * 12 у Сестёр), индекс кадра каждый лист считает сам от одного времени.
+ */
 @Composable
-fun rememberSpriteFrame(totalFrames: Int, fps: Int = 12): State<Int> {
-    val frame = remember { mutableIntStateOf(0) }
-    val msPerFrame = 1000L / fps
-    LaunchedEffect(totalFrames, fps) {
+fun rememberSpriteClock(): State<Long> {
+    val ms = remember { mutableLongStateOf(0L) }
+    LaunchedEffect(Unit) {
         while (true) {
-            withFrameMillis { ms ->
-                frame.intValue = ((ms / msPerFrame) % totalFrames).toInt()
+            withFrameMillis { t ->
+                val q = t - t % 83L  // ~12 Гц — не перерисовываем каждый vsync
+                if (q != ms.longValue) ms.longValue = q
             }
         }
     }
-    return frame
+    return ms
 }
 
 // ── Главный рендерер ──────────────────────────────────────────────────────────
@@ -206,7 +198,7 @@ fun IsoMapRenderer(
 ) {
     val context = LocalContext.current
     var camOffset by remember { mutableStateOf(Offset(0f, -180f)) }
-    val spriteFrame by rememberSpriteFrame(45, fps = 12)
+    val spriteClock by rememberSpriteClock()
 
     // Карта регенерируется когда игрок близко к краю — ОДНИМ seed'ом.
     // engine.worldMap — та же карта, которой пользуются Pathfinder и BehaviourExecutor.
@@ -303,19 +295,22 @@ fun IsoMapRenderer(
 
             val dirStr = entity.memoryString("direction") ?: "SOUTH"
             val dir    = runCatching { Direction.valueOf(dirStr) }.getOrDefault(Direction.SOUTH)
-            val key    = spritePath(if (isPlayer) "sister_3" else entity.name, dir)
-            val sheet  = SpriteCache.load(context, key)
+            val base   = spriteBase(if (isPlayer) "sister_3" else entity.name)
+            val key    = "${base}_${dir.name.lowercase()}.png"
+            val sheet  = SpriteSheetCache.sheet(context, key, base)
 
             if (sheet != null) {
-                val frameCount = if (isPlayer) 45 else 2
-                val frameW     = sheet.width / frameCount
-                val frameH     = sheet.height
-                val scale      = if (isPlayer) 0.45f else 1f
-                val fi         = if (isPlayer) spriteFrame else (spriteFrame % 2)
-                // Позиция фиксирована — не зависит от frameW (не плавает при смене кадров)
-                val screenX    = sx - frameW * scale / 2f
-                val screenY    = sy - frameH * scale
-                drawSprite(sheet, fi, frameW, frameH, screenX, screenY, scale)
+                val frameH  = sheet.bitmap.height
+                // Масштаб от целевой высоты: враги (120px) остаются 1:1,
+                // Сёстры (309–332px) ужимаются одинаково для игрока и NPC
+                val targetH = if (isPlayer) 150f else 120f
+                val scale   = targetH / frameH
+                val fi      = sheet.frameAt(spriteClock)
+                // Позиция центрируется по номинальной ширине кадра —
+                // не плавает при смене кадров неравной ширины
+                val screenX = sx - sheet.nominalW * scale / 2f
+                val screenY = sy - frameH * scale
+                drawSpriteFrame(sheet, fi, screenX, screenY, scale)
             } else {
                 val color = when {
                     isPlayer               -> Color(0xFF44AAFF)
@@ -332,26 +327,27 @@ fun IsoMapRenderer(
     }
 }
 
-// ── drawSprite — точная копия из первой рабочей версии (cab0e549) ─────────────
-fun DrawScope.drawSprite(
-    sheet: ImageBitmap,
+// ── drawSpriteFrame — кадр по точным границам из SpriteSheet ──────────────────
+fun DrawScope.drawSpriteFrame(
+    sheet: SpriteSheet,
     frameIndex: Int,
-    frameW: Int, frameH: Int,
     screenX: Float, screenY: Float,
     scale: Float = 1f,
 ) {
-    val srcLeft = frameIndex * frameW
-    if (srcLeft + frameW > sheet.width) return
+    val srcLeft = sheet.srcLeft(frameIndex)
+    val srcW = sheet.srcWidth(frameIndex)
+    val srcH = sheet.bitmap.height
+    if (srcW <= 0 || srcLeft + srcW > sheet.bitmap.width) return
     withTransform({
         translate(screenX, screenY)
         scale(scale, scale, pivot = Offset.Zero)
     }) {
         drawImage(
-            image         = sheet,
+            image         = sheet.bitmap,
             srcOffset     = IntOffset(srcLeft, 0),
-            srcSize       = IntSize(frameW, frameH),
+            srcSize       = IntSize(srcW, srcH),
             dstOffset     = IntOffset.Zero,
-            dstSize       = IntSize(frameW, frameH),
+            dstSize       = IntSize(srcW, srcH),
             filterQuality = FilterQuality.None,
         )
     }
