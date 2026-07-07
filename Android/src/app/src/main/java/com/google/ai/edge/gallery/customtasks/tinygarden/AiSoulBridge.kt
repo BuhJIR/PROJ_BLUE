@@ -66,7 +66,12 @@ class AiSoulBridge(val engine: GameEngine) : ToolSet {
     fun processPureJson(jsonString: String) {
         try {
             val json = JSONObject(jsonString)
-            when (json.optString("action").uppercase()) {
+            // Модель смешивает каналы: пишет имена инструментов как JSON-экшены
+            // ("execute_damage", "build_structure"). Нормализуем — убираем
+            // подчёркивания/дефисы, дальше матчим по алиасам, а не буквально.
+            val action = json.optString("action").uppercase()
+                .replace("_", "").replace("-", "")
+            when (action) {
 
                 "SPAWN" -> {
                     val entityName = json.optString("name", "Unknown")
@@ -117,7 +122,7 @@ class AiSoulBridge(val engine: GameEngine) : ToolSet {
                     Log.d(TAG, "Spawned: $entityName at ($x,$y)")
                 }
 
-                "SET_FLAG" -> {
+                "SETFLAG" -> {
                     val target = json.optString("target")
                     val flag = json.optString("flag")
                     val value = json.optBoolean("value", true)
@@ -125,7 +130,7 @@ class AiSoulBridge(val engine: GameEngine) : ToolSet {
                     engine.logMessage("[$target] flag $flag → $value")
                 }
 
-                "BULK_FLAG" -> {
+                "BULKFLAG", "BULKAPPLYFLAG" -> {
                     // "Все гоблины крестьяне сегодня празднуют"
                     // { "action": "BULK_FLAG", "match": ["GOBLIN","PEASANT"],
                     //   "remove_group": "WORK", "add_flags": ["CELEBRATE"] }
@@ -139,7 +144,7 @@ class AiSoulBridge(val engine: GameEngine) : ToolSet {
                     engine.bulkFlag(match, removeGroup, addFlags)
                 }
 
-                "DROP_ITEM" -> {
+                "DROPITEM" -> {
                     val type = json.optString("type", "ITEM")
                     val x = json.optInt("x", 5)
                     val y = json.optInt("y", 5)
@@ -147,7 +152,7 @@ class AiSoulBridge(val engine: GameEngine) : ToolSet {
                     engine.logMessage("A $type appears at ($x, $y).")
                 }
 
-                "EMIT_EVENT" -> {
+                "EMITEVENT", "EMITWORLDEVENT", "EVENT" -> {
                     val x = json.optDouble("x", 5.0).toFloat()
                     val y = json.optDouble("y", 5.0).toFloat()
                     val radius = json.optDouble("radius", 128.0).toFloat()
@@ -161,19 +166,57 @@ class AiSoulBridge(val engine: GameEngine) : ToolSet {
                     engine.transitionMode(if (mode.uppercase() == "BATTLE") GameMode.BATTLE else GameMode.OVERWORLD)
                 }
 
-                "DAMAGE" -> {
-                    val target = json.optString("target")
-                    val amount = json.optInt("amount", 0)
+                "DAMAGE", "EXECUTEDAMAGE" -> {
+                    val target = json.optString("target").ifEmpty { json.optString("name") }
+                    val amount = json.optInt("amount", json.optInt("damage", json.optInt("value", 0)))
                     engine.applyDamage(target, amount)
                 }
 
-                "WORLD_LAW" -> {
+                "MOVE", "EXECUTEMOVE" -> {
+                    // Инструмент, написанный как JSON: {"action":"execute_move","target":"Hero","direction":"NORTH","steps":2}
+                    val target = json.optString("target").ifEmpty { json.optString("name") }
+                    val direction = json.optString("direction").ifEmpty { json.optString("dir") }
+                    val steps = json.optInt("steps", json.optInt("count", 1)).coerceIn(1, 8)
+                    var dx = 0; var dy = 0
+                    when (direction.uppercase()) {
+                        "NORTH" -> dy = -steps; "SOUTH" -> dy = steps
+                        "EAST"  -> dx = steps;  "WEST"  -> dx = -steps
+                    }
+                    if (dx != 0 || dy != 0) {
+                        engine.moveEntity(target, dx, dy)
+                        engine.logMessage("$target moves $direction $steps step${if (steps > 1) "s" else ""}.")
+                    }
+                }
+
+                "BUILD", "BUILDSTRUCTURE" -> {
+                    // {"action":"build_structure","dsl":"3×levels; stairs; stone; flat","x":28,"y":41}
+                    val dsl = json.optString("dsl").ifEmpty { json.optString("structure") }
+                    if (dsl.isNotEmpty()) {
+                        val x = json.optInt("x", engine.currentState().player.col)
+                        val y = json.optInt("y", engine.currentState().player.row)
+                        val spec = StructureParser.parse(dsl)
+                        StructureGenerator.applyToEngine(spec, x, y, engine)
+                    }
+                }
+
+                "RAISE", "RAISETERRAIN", "RAISEFLOOR", "RAISEGROUND" -> {
+                    // {"action":"raise_terrain","x":28,"y":41,"radius":6,"height":3}
+                    val x = json.optInt("x", engine.currentState().player.col)
+                    val y = json.optInt("y", engine.currentState().player.row)
+                    val radius = json.optInt("radius", 4)
+                    val height = json.optInt("height", json.optInt("lift", 1))
+                    StructureGenerator.raiseTerrain(x, y, radius, height, engine)
+                }
+
+                "WORLDLAW", "REWRITEWORLDLAW" -> {
                     // {"action":"WORLD_LAW","law":"The sun has gone out. Darkness is permanent."}
                     val law = json.optString("law")
+                        .ifEmpty { json.optString("newLaw") }
+                        .ifEmpty { json.optString("new_law") }
                     if (law.isNotEmpty()) engine.setWorldLaw(law)
                 }
 
-                "SETTLEMENT_LORE" -> {
+                "SETTLEMENTLORE" -> {
                     // {"action":"SETTLEMENT_LORE","id":"riverside_village","lore":"Here, Three is honoured above all."}
                     val id = json.optString("id")
                     val lore = json.optString("lore")
@@ -237,6 +280,19 @@ class AiSoulBridge(val engine: GameEngine) : ToolSet {
         val spec = StructureParser.parse(dsl)
         StructureGenerator.applyToEngine(spec, x, y, engine)
         return mapOf("result" to "success", "levels" to spec.levels, "material" to spec.material.name)
+    }
+
+    @Tool(description = "Raise ALL terrain in a radius around a point — including every structure " +
+        "standing on it. The player states the radius in their request; pass it through. " +
+        "Use for floods of earth, ritual platforms, lifting a whole district.")
+    fun raiseTerrain(
+        @ToolParam(description = "X coordinate of the centre") x: Int,
+        @ToolParam(description = "Y coordinate of the centre") y: Int,
+        @ToolParam(description = "Radius in tiles, as stated by the player") radius: Int,
+        @ToolParam(description = "How many height units to lift (1-10 typical)") height: Int,
+    ): Map<String, Any> {
+        StructureGenerator.raiseTerrain(x, y, radius, height, engine)
+        return mapOf("result" to "success", "radius" to radius, "height" to height)
     }
 
     @Tool(description = "Rewrite the fundamental law of the world. Use only for major plot events that " +

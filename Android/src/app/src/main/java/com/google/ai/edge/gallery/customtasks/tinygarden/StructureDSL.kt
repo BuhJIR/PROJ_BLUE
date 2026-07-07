@@ -21,13 +21,18 @@ data class LayeredTileEx(
     val stair: StairInfo? = null,
 )
 
+/** Семейство формы постройки (SPEC §16): shape отделён от материала и декора. */
+enum class StructureShape { ZIGGURAT, TOWER, RING }
+
 data class StructureSpec(
-    val levels: Int,               // сколько ярусов (пирамида вниз к 1)
+    val levels: Int,               // сколько ярусов — БЕЗ ограничений, мир не спорит
     val hasStairs: Boolean,
     val excludeTrees: Boolean,
     val material: TileType,
-    val openType: Boolean,         // true = терраса открыта, false = закрытая крыша
+    val openType: Boolean,         // терраса/ворота: для ring — проём в южной стене
     val flatTop: Boolean,          // true = верх плоский, false = пик/пирамида
+    val shape: StructureShape = StructureShape.ZIGGURAT,
+    val baseSize: Int = 0,         // 0 = авто: зиккурат сам расширяет базу под ярусы
 )
 
 /**
@@ -49,12 +54,18 @@ object StructureParser {
         var material = TileType.STONE
         var openType = true
         var flatTop = true
+        var shape = StructureShape.ZIGGURAT
+        var baseSize = 0
 
         for (tok in tokens) {
             when {
                 tok.contains("×level") || tok.contains("xlevel") -> {
-                    levels = tok.substringBefore("×").substringBefore("x")
-                        .filter { it.isDigit() }.toIntOrNull() ?: 1
+                    levels = (tok.substringBefore("×").substringBefore("x")
+                        .filter { it.isDigit() }.toIntOrNull() ?: 1).coerceAtLeast(1)
+                }
+                tok.contains("×base") || tok.contains("xbase") -> {
+                    baseSize = (tok.substringBefore("×").substringBefore("x")
+                        .filter { it.isDigit() }.toIntOrNull() ?: 0).coerceAtLeast(0)
                 }
                 tok == "stairs" || tok == "stair"      -> hasStairs = true
                 tok == "non-trees" || tok == "no-trees" -> excludeTrees = true
@@ -66,9 +77,11 @@ object StructureParser {
                 tok == "closed-type" || tok == "closed" -> openType = false
                 tok == "flat"    -> flatTop = true
                 tok == "peak" || tok == "pyramid"       -> flatTop = false
+                tok == "tower"   -> shape = StructureShape.TOWER
+                tok == "ring" || tok == "walls" || tok == "courtyard" -> shape = StructureShape.RING
             }
         }
-        return StructureSpec(levels, hasStairs, excludeTrees, material, openType, flatTop)
+        return StructureSpec(levels, hasStairs, excludeTrees, material, openType, flatTop, shape, baseSize)
     }
 }
 
@@ -88,25 +101,37 @@ object StructureGenerator {
         spec: StructureSpec,
         centerCol: Int,
         centerRow: Int,
-        baseSize: Int = 7,       // размер нижнего яруса (нечётное — есть центр)
-        margin: Int = 1,         // на сколько уменьшается каждый следующий ярус
+        margin: Int = 1,         // на сколько сужается каждый ярус зиккурата
         baseHeight: Int = 0,     // высота земли: постройка растёт ОТ рельефа, не от нуля
+    ): List<Triple<Int, Int, LayeredTileEx>> = when (spec.shape) {
+        StructureShape.ZIGGURAT -> ziggurat(spec, centerCol, centerRow, margin, baseHeight)
+        StructureShape.TOWER    -> tower(spec, centerCol, centerRow, baseHeight)
+        StructureShape.RING     -> ring(spec, centerCol, centerRow, baseHeight)
+    }
+
+    /**
+     * Зиккурат/пирамида. База либо задана токеном 'N×base', либо авто:
+     * расширяется под запрошенные ярусы — попросили 150 ярусов, получат гору.
+     */
+    private fun ziggurat(
+        spec: StructureSpec, centerCol: Int, centerRow: Int,
+        margin: Int, baseHeight: Int,
     ): List<Triple<Int, Int, LayeredTileEx>> {
         val result = mutableListOf<Triple<Int, Int, LayeredTileEx>>()
+        val baseSize = if (spec.baseSize > 0) spec.baseSize
+                       else maxOf(7, spec.levels * margin * 2 + 1)
 
-        // Тело зиккурата: полные квадраты, каждый ярус уже предыдущего
+        // Тело: полные квадраты, каждый ярус уже предыдущего
         for (level in 0 until spec.levels) {
             val size = baseSize - level * margin * 2
             if (size <= 0) break
             placeSquare(result, spec.material, centerCol, centerRow, size, baseHeight + level)
 
-            // Ступени — на каждой границе ярусов, по центру одной из сторон
+            // Ступени — на каждой границе ярусов, по центру южной стороны
             if (spec.hasStairs && level > 0) {
                 val prevHalf = (baseSize - (level - 1) * margin * 2) / 2
-                val stairCol = centerCol
-                val stairRow = centerRow + prevHalf  // южная сторона
                 result.add(Triple(
-                    stairCol, stairRow,
+                    centerCol, centerRow + prevHalf,
                     LayeredTileEx(
                         spec.material, baseHeight + level - 1,
                         StairInfo(baseHeight + level - 1, baseHeight + level, StepDirection.SOUTH)
@@ -115,8 +140,7 @@ object StructureGenerator {
             }
         }
 
-        // Пик (SPEC §12): не кольцо с точкой, а настоящее сужение — продолжаем
-        // ставить уменьшающиеся квадраты над телом, пока не сойдёмся к колонне 1×1.
+        // Пик (SPEC §12): настоящее сужение до колонны 1×1 над телом.
         // Поздние тайлы перекрывают ранние на тех же клетках — вершина выигрывает.
         if (!spec.flatTop) {
             var level = spec.levels
@@ -127,7 +151,54 @@ object StructureGenerator {
                 level++
             }
         }
+        return result
+    }
 
+    /**
+     * Башня (SPEC §16 TowerShape): основание НЕ сужается, рост только вверх —
+     * единственная форма, где 150 ярусов имеют смысл. Тайл — колонна полной
+     * высоты, поэтому достаточно одной записи с финальной высотой.
+     */
+    private fun tower(
+        spec: StructureSpec, centerCol: Int, centerRow: Int, baseHeight: Int,
+    ): List<Triple<Int, Int, LayeredTileEx>> {
+        val result = mutableListOf<Triple<Int, Int, LayeredTileEx>>()
+        val size = if (spec.baseSize > 0) spec.baseSize else 3
+        val topH = baseHeight + spec.levels - 1
+        placeSquare(result, spec.material, centerCol, centerRow, size, topH)
+        // Пик поверх башни — маленький шпиль
+        if (!spec.flatTop) {
+            var level = topH + 1
+            var s = size - 2
+            while (s >= 1) {
+                placeSquare(result, spec.material, centerCol, centerRow, s, level)
+                s -= 2
+                level++
+            }
+        }
+        return result
+    }
+
+    /**
+     * Кольцо (SPEC §16 RingShape): только стены, внутри — двор на земле.
+     * open-type оставляет ворота в южной стене.
+     */
+    private fun ring(
+        spec: StructureSpec, centerCol: Int, centerRow: Int, baseHeight: Int,
+    ): List<Triple<Int, Int, LayeredTileEx>> {
+        val result = mutableListOf<Triple<Int, Int, LayeredTileEx>>()
+        val size = if (spec.baseSize > 0) spec.baseSize else 9
+        val half = size / 2
+        val wallH = baseHeight + spec.levels - 1
+        for (dr in -half..half) {
+            for (dc in -half..half) {
+                val isEdge = dr == -half || dr == half || dc == -half || dc == half
+                if (!isEdge) continue
+                // Ворота: проём в центре южной стены
+                if (spec.openType && dr == half && dc == 0) continue
+                result.add(Triple(centerCol + dc, centerRow + dr, LayeredTileEx(spec.material, wallH)))
+            }
+        }
         return result
     }
 
@@ -152,5 +223,37 @@ object StructureGenerator {
         val groundH = engine.worldMap.tileAt(centerCol, centerRow).height
         val tiles = generate(spec, centerCol, centerRow, baseHeight = groundH + 1)
         engine.applyStructure(tiles)
+    }
+
+    /**
+     * Поднять весь пол в радиусе — вместе со ВСЕМ построенным на нём.
+     * Радиус называет игрок; Душа передаёт его параметром.
+     */
+    fun raiseTerrain(centerCol: Int, centerRow: Int, radius: Int, lift: Int, engine: GameEngine) {
+        val tiles = mutableListOf<Triple<Int, Int, LayeredTileEx>>()
+        val r2 = radius * radius
+        for (dr in -radius..radius) {
+            for (dc in -radius..radius) {
+                if (dc * dc + dr * dr > r2) continue
+                val c = centerCol + dc
+                val r = centerRow + dr
+                val existing = engine.structureOverrides[c to r]
+                if (existing != null) {
+                    // Постройка едет вверх вместе с полом, лестницы — тоже
+                    tiles.add(Triple(c, r, existing.copy(
+                        height = existing.height + lift,
+                        stair = existing.stair?.copy(
+                            fromHeight = existing.stair.fromHeight + lift,
+                            toHeight = existing.stair.toHeight + lift,
+                        ),
+                    )))
+                } else {
+                    val t = generateTile(c, r, engine.worldMap.seed)
+                    tiles.add(Triple(c, r, LayeredTileEx(t.base, t.height + lift)))
+                }
+            }
+        }
+        engine.applyStructure(tiles)
+        engine.logMessage("The ground itself obeys — earth rises within $radius tiles.")
     }
 }

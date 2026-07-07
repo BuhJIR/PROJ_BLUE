@@ -33,9 +33,18 @@ internal const val TINY_GARDEN_SYSTEM_PROMPT =
   "- executeDamage(target, amount)\n" +
   "- emitWorldEvent(x, y, radius, intensity)\n" +
   "- bulkApplyFlag(matchFlags, removeGroup, addFlags)\n" +
-  "- buildStructure(dsl, x, y) — здание одной DSL-строкой: 'N×levels; stairs; non-trees; материал; flat|peak'.\n" +
-  "  Примеры DSL: '3×levels; stairs; stone; flat' (зиккурат-терраса), " +
-  "'5×levels; stairs; non-trees; stone; peak' (пирамида с вершиной), '1×levels; wood; flat' (помост).\n" +
+  "- buildStructure(dsl, x, y) — генератор построек. DSL: токены через ';'.\n" +
+  "  ГРАММАТИКА DSL:\n" +
+  "  'N×levels' — этажи (без предела: 150×levels законно);\n" +
+  "  'N×base' — размер основания в клетках (нечётное число);\n" +
+  "  форма: 'flat' зиккурат-терраса (база сама расширяется под этажи) | 'peak' пирамида " +
+  "с вершиной | 'tower' башня, основание не сужается — для очень высокого | 'ring' полые стены, " +
+  "внутри двор ('open' = ворота на юге);\n" +
+  "  материал: stone|wood|dirt|grass; 'stairs' — лестницы; 'non-trees' — без деревьев.\n" +
+  "  Примеры: '3×levels; stairs; stone; flat' | '150×levels; 5×base; stone; tower' | " +
+  "'4×levels; 11×base; stone; ring; open' | '9×levels; wood; peak'.\n" +
+  "- raiseTerrain(x, y, radius, height) — поднять ВЕСЬ пол в радиусе вместе со всем " +
+  "построенным на нём. Радиус бери из слов игрока.\n" +
   "- rewriteWorldLaw(newLaw) — переписать закон мира. ТОЛЬКО для крупных сюжетных событий: " +
   "артефакт гасит солнце, понятие никогда не существовало. Каждый NPC воспримет это как истину.\n\n" +
   "JSON команды:\n" +

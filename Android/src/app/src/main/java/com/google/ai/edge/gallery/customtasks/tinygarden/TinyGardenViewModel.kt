@@ -135,13 +135,18 @@ constructor(
         val responseMessage = conversation.sendMessage(Contents.of(contents))
         val response = responseMessage.toString()
 
-        // Команда может быть вшита в прозу — извлекаем первый {...} блок (SPEC §10)
-        val (jsonCommand, narrative) = SoulResponseParser.extractFirstJsonObject(response)
-        if (jsonCommand != null) {
+        // Команды могут быть вшиты в прозу, и их может быть несколько —
+        // извлекаем и исполняем все {...} блоки (SPEC §10)
+        var rest = response
+        var guard = 0
+        while (guard++ < 8) {
+            val (jsonCommand, narrative) = SoulResponseParser.extractFirstJsonObject(rest)
+            if (jsonCommand == null) break
             aiBridge.processPureJson(jsonCommand)
+            rest = narrative
         }
-        if (narrative.isNotBlank()) {
-            engine.logMessage("Soul: $narrative")
+        if (rest.isNotBlank()) {
+            engine.logMessage("Soul: $rest")
         }
 
         addMessage(message = ChatMessageText(content = response, side = ChatSide.AGENT))
