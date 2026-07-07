@@ -111,6 +111,7 @@ constructor(
     }
 
     incrementNumTurns()
+    engine.advanceTurn() // мировое время: флора живёт по ходам
     this.addMessage(message = ChatMessageText(content = instructionText, side = ChatSide.USER))
 
     viewModelScope.launch(Dispatchers.Default) {

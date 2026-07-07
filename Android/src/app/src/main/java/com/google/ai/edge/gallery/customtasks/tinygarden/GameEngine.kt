@@ -69,6 +69,9 @@ class Entity(
     val memory: MutableMap<String, MemoryValue> = mutableMapOf()
     var currentBehaviour: Behaviour = Behaviour.Idle
     var isAwake: Boolean = true
+    // Сколько клеток NPC проходит за одно пробуждение (прямо или L-образно).
+    // Расширяемо: быстрые твари могут получить больше, раненые — меньше.
+    var moveRange: Int = 4
 
     // Типобезопасные читатели памяти — единственный способ достать значение
     fun memoryString(key: String): String? = (memory[key] as? MemoryValue.Str)?.v
@@ -406,6 +409,11 @@ class GameEngine {
         updateState { copy(battleLog = (battleLog + msg).takeLast(200)) } // кольцевой буфер
     }
 
+    /** Ход мира: каждый обмен с Душой двигает время — цветы растут и увядают. */
+    fun advanceTurn() {
+        updateState { copy(turn = turn + 1) }
+    }
+
     fun transitionMode(mode: GameMode) {
         updateState { copy(mode = mode) }
         logMessage(if (mode == GameMode.BATTLE) "⚔ Battle begins!" else "🌿 Back to the overworld.")
@@ -511,13 +519,13 @@ class GameEngine {
             val y = p.y + dy
             if (!worldMap.isWalkable(x, y)) continue
             if (occupiedCells().contains(x to y)) continue
-            val skull = spawned % 2 == 0
-            val e = if (skull) {
-                Entity(name = "Skull Warden", hp = 30, maxHp = 30, x = x, y = y).apply {
+            val hostile = spawned % 2 == 0
+            val e = if (hostile) {
+                Entity(name = "Skeleton Mage", hp = 30, maxHp = 30, x = x, y = y).apply {
                     addFlag("ENEMY"); addFlag("AGGRESSIVE")
                 }
             } else {
-                Entity(name = "Red Imp", hp = 14, maxHp = 14, x = x, y = y).apply {
+                Entity(name = "Skeleton Acolyte", hp = 14, maxHp = 14, x = x, y = y).apply {
                     addFlag("FORAGER")
                     needs.add(Need("HUNGER", 80, setOf("FRUIT", "FOOD")))
                 }

@@ -82,6 +82,8 @@ data class IsoMap(
     val overrides: Map<Pair<Int, Int>, LayeredTileEx> = emptyMap(),
     // Seed мира: теперь часть состояния, а не константа — NEW GAME даёт новый мир
     val seed: Long = WORLD_SEED,
+    // Предрасчитанная близость воды (радиус 2) — цветы у воды растут гуще
+    val waterNear: Array<BooleanArray>? = null,
 ) {
     // localCol/localRow → индекс в массиве
     private fun local(worldCol: Int, worldRow: Int): Pair<Int,Int> {
@@ -100,6 +102,13 @@ data class IsoMap(
 
     /** Полный тайл постройки (с лестницей) на этой клетке, если есть. */
     fun structureAt(worldCol: Int, worldRow: Int): LayeredTileEx? = overrides[worldCol to worldRow]
+
+    /** Есть ли вода в радиусе 2 клеток (в пределах буфера). */
+    fun isNearWater(worldCol: Int, worldRow: Int): Boolean {
+        val wn = waterNear ?: return false
+        val (lc, lr) = local(worldCol, worldRow)
+        return lr in 0 until rows && lc in 0 until cols && wn[lr][lc]
+    }
 
     fun isWalkable(col: Int, row: Int): Boolean {
         // Постройки проходимы (кроме воды в них); дикий WOOD — дерево, преграда
@@ -195,7 +204,18 @@ fun generateMapAround(
             generateTile(wc, wr, seed)
         }
     }
-    return IsoMap(cols, rows, centerCol, centerRow, tiles, overrides, seed)
+    // Близость воды: один проход при сборке буфера, дальше — O(1) на клетку
+    val waterNear = Array(rows) { BooleanArray(cols) }
+    for (r in 0 until rows) for (c in 0 until cols) {
+        if (tiles[r][c].base == TileType.WATER) {
+            for (dr in -2..2) for (dc in -2..2) {
+                val rr = r + dr
+                val cc = c + dc
+                if (rr in 0 until rows && cc in 0 until cols) waterNear[rr][cc] = true
+            }
+        }
+    }
+    return IsoMap(cols, rows, centerCol, centerRow, tiles, overrides, seed, waterNear)
 }
 
 // ── Направления ───────────────────────────────────────────────────────────────
@@ -203,8 +223,12 @@ enum class Direction { SOUTH, NORTH, WEST, EAST }
 
 /** Базовое имя листа для персонажа — ключ в sprites_meta.json. */
 fun spriteBase(charName: String): String = when {
-    charName.contains("skull",    ignoreCase = true) -> "sprites/enemy_skull"
-    charName.contains("red",      ignoreCase = true) -> "sprites/enemy_red"
+    // Все враждебные/нежить-имена → скелет-маг (enemy_* листы были битые, удалены)
+    charName.contains("skeleton", ignoreCase = true) ||
+    charName.contains("skull",    ignoreCase = true) ||
+    charName.contains("mage",     ignoreCase = true) ||
+    charName.contains("imp",      ignoreCase = true) ||
+    charName.contains("red",      ignoreCase = true) -> "sprites/skeleton_mage"
     charName.contains("ice",      ignoreCase = true) -> "sprites/hero_ice"
     charName.contains("sister_4", ignoreCase = true) -> "sprites/sister_4"
     charName.contains("sister_5", ignoreCase = true) -> "sprites/sister_5"
@@ -321,7 +345,11 @@ fun IsoMapRenderer(
                 }
                 // Растительность на диких клетках — кроме камня и воды
                 if (wildTile && (lt.base == TileType.GRASS || lt.base == TileType.DIRT)) {
-                    drawVegetation(sx, sy, seedFor(wc, wr), lt.base)
+                    drawVegetation(
+                        sx, sy, seedFor(wc, wr), lt.base,
+                        turn = gameState.turn,
+                        nearWater = liveMap.isNearWater(wc, wr),
+                    )
                 }
 
                 // Ступень — диагональный переход внутри клетки
@@ -462,28 +490,67 @@ fun DrawScope.drawTree(cx: Float, cy: Float, seed: Int) {
 }
 
 /**
- * Растительность: до трёх пучков/кустов/цветов на клетку, той же техникой,
- * что и деревья — детерминированно от координат, без мигания. На земле —
- * только редкие сухие пучки; неоновые головки цветов — акценты кибер-готики.
+ * Растительность: пучки/кусты статичны; цветы растут пачками крупных кружков,
+ * не по центру клетки, живут циклом (растут → цветут → увядают → исчезают)
+ * от хода мира и гуще у воды. Всё детерминированно от координат — не мигает.
  */
-fun DrawScope.drawVegetation(cx: Float, cy: Float, seed: Int, base: TileType) {
+fun DrawScope.drawVegetation(
+    cx: Float, cy: Float, seed: Int, base: TileType,
+    turn: Int, nearWater: Boolean,
+) {
     var bits = seed
-    val maxN = if (base == TileType.DIRT) 1 else 3
+    // Пучки и кусты — как раньше, статичный подлесок
+    val maxN = if (base == TileType.DIRT) 1 else 2
     for (i in 0 until maxN) {
         val roll = bits and 0xF; bits = bits ushr 4
-        val show = if (base == TileType.DIRT) roll < 2 else roll < 7
+        val show = if (base == TileType.DIRT) roll < 2 else roll < 6
         if (!show) continue
-        // Смещение внутри ромба клетки (сплюснуто по вертикали изометрии)
         val ox = ((bits and 0x1F) - 15).toFloat(); bits = bits ushr 5
         val oy = ((bits and 0xF) - 7) * 0.8f; bits = bits ushr 4
         val px = cx + ox * 0.9f
         val py = cy + oy
-        val kind = bits and 0x7; bits = bits ushr 3
-        when {
-            base == TileType.DIRT || kind < 3 -> drawTuft(px, py, dry = base == TileType.DIRT)
-            kind < 5                          -> drawBush(px, py)
-            else                              -> drawFlower(px, py, bits)
+        val kind = bits and 0x3; bits = bits ushr 2
+        if (base == TileType.DIRT || kind < 3) drawTuft(px, py, dry = base == TileType.DIRT)
+        else drawBush(px, py)
+    }
+
+    // Цветочная пачка на клетке: у воды — чаще и крупнее
+    if (base != TileType.GRASS) return
+    val patchRoll = bits and 0xF; bits = bits ushr 4
+    val patchChance = if (nearWater) 6 else 2
+    if (patchRoll >= patchChance) return
+
+    // Жизненный цикл пачки: фаза сдвинута seed'ом, тикает ходом мира
+    val phase = ((bits and 0x7) + turn) % 10; bits = bits ushr 3
+    val life = when (phase) {
+        0 -> 0.45f          // проклюнулись
+        1 -> 0.75f          // растут
+        in 2..5 -> 1f       // цветение
+        6 -> 0.8f           // начали никнуть
+        7 -> 0.5f           // увяли
+        else -> return      // пусто — клетка отдыхает
+    }
+    val wilting = phase >= 6
+
+    // Центр пачки смещён от центра клетки
+    val pcx = cx + (((bits and 0x1F) - 15).toFloat()) * 0.8f; bits = bits ushr 5
+    val pcy = cy + (((bits and 0x7) - 3).toFloat()) * 1.2f; bits = bits ushr 3
+    val heads = 3 + (bits and 0x3) + (if (nearWater) 2 else 0); bits = bits ushr 2
+
+    for (i in 0 until heads) {
+        val hx = pcx + (((bits and 0xF) - 7).toFloat()) * 1.4f; bits = bits ushr 4
+        val hy = pcy + (((bits and 0x7) - 3).toFloat()) * 1.1f; bits = bits ushr 3
+        var head = when (bits and 0x3) {
+            0    -> Color(0xFF00E5FF)  // неоновый циан
+            1    -> Color(0xFFE040FB)  // фуксия
+            2    -> Color(0xFF9C7BFF)  // фиолет
+            else -> Color(0xFFFF5370)  // алый
         }
+        bits = bits ushr 2
+        if (wilting) head = head.copy(alpha = 0.55f)
+        val r = (3.5f + (bits and 0x3) * 0.8f) * life; bits = bits ushr 2
+        drawCircle(head.copy(alpha = head.alpha * 0.35f), r * 1.8f, Offset(hx, hy))  // свечение
+        drawCircle(head, r, Offset(hx, hy))
     }
 }
 
@@ -497,18 +564,6 @@ private fun DrawScope.drawTuft(x: Float, y: Float, dry: Boolean) {
 private fun DrawScope.drawBush(x: Float, y: Float) {
     drawCircle(Color(0xFF1E4034), 6f, Offset(x, y - 4f))
     drawCircle(Color(0xFF2A5644), 4f, Offset(x + 3f, y - 7f))
-}
-
-private fun DrawScope.drawFlower(x: Float, y: Float, bits: Int) {
-    drawLine(Color(0xFF3A5A4A), Offset(x, y), Offset(x, y - 6f), strokeWidth = 1.5f)
-    val head = when (bits and 0x3) {
-        0    -> Color(0xFF00E5FF)  // неоновый циан
-        1    -> Color(0xFFE040FB)  // фуксия
-        2    -> Color(0xFF9C7BFF)  // фиолет
-        else -> Color(0xFFFF5370)  // алый
-    }
-    drawCircle(head.copy(alpha = 0.35f), 4.5f, Offset(x, y - 7f))  // свечение
-    drawCircle(head, 2.6f, Offset(x, y - 7f))
 }
 
 fun DrawScope.drawStairOverlay(cx: Float, cy: Float, stair: StairInfo, material: TileType) {
