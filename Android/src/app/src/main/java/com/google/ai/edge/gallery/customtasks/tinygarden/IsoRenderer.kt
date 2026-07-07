@@ -51,20 +51,22 @@ enum class TileType { GRASS, DIRT, STONE, WATER, WOOD, VOID }
 
 data class LayeredTile(val base: TileType, val height: Int = 0)
 
+// Кибер-готика: пепельная зелень, фиолетовый пепел земли, холодная сталь,
+// неоновая бездна воды. Яркость оставлена цветам-акцентам (цветы, вода, HUD).
 val TILE_TOP = mapOf(
-    TileType.GRASS to Color(0xFF5D9B50), TileType.DIRT  to Color(0xFFA07820),
-    TileType.STONE to Color(0xFF858585), TileType.WATER to Color(0xFF2E86C1),
-    TileType.WOOD  to Color(0xFF7B4F2A), TileType.VOID  to Color(0xFF2A2A3A),
+    TileType.GRASS to Color(0xFF3B5248), TileType.DIRT  to Color(0xFF4E3B52),
+    TileType.STONE to Color(0xFF6E7B8B), TileType.WATER to Color(0xFF0F6272),
+    TileType.WOOD  to Color(0xFF4A3040), TileType.VOID  to Color(0xFF161622),
 )
 val TILE_LEFT = mapOf(
-    TileType.GRASS to Color(0xFF4A7C3F), TileType.DIRT  to Color(0xFF8B6914),
-    TileType.STONE to Color(0xFF6B6B6B), TileType.WATER to Color(0xFF1A5276),
-    TileType.WOOD  to Color(0xFF5D3A1A), TileType.VOID  to Color(0xFF1A1A2A),
+    TileType.GRASS to Color(0xFF2B3D36), TileType.DIRT  to Color(0xFF3A2C40),
+    TileType.STONE to Color(0xFF505A66), TileType.WATER to Color(0xFF0A4250),
+    TileType.WOOD  to Color(0xFF362232), TileType.VOID  to Color(0xFF10101A),
 )
 val TILE_RIGHT = mapOf(
-    TileType.GRASS to Color(0xFF2E5A28), TileType.DIRT  to Color(0xFF5C4510),
-    TileType.STONE to Color(0xFF444444), TileType.WATER to Color(0xFF0E3A5C),
-    TileType.WOOD  to Color(0xFF3D2210), TileType.VOID  to Color(0xFF111122),
+    TileType.GRASS to Color(0xFF1C2A24), TileType.DIRT  to Color(0xFF271D2C),
+    TileType.STONE to Color(0xFF353D46), TileType.WATER to Color(0xFF062C36),
+    TileType.WOOD  to Color(0xFF231521), TileType.VOID  to Color(0xFF0A0A12),
 )
 
 // ── Карта ──────────────────────────────────────────────────────────────────────
@@ -310,11 +312,16 @@ fun IsoMapRenderer(
                 if (sy < -TILE_H * 6 || sy > size.height + TILE_H * 6) continue
 
                 // Дикий WOOD — дерево на траве; WOOD в постройке — материал
-                if (lt.base == TileType.WOOD && liveMap.structureAt(wc, wr) == null) {
+                val wildTile = liveMap.structureAt(wc, wr) == null
+                if (lt.base == TileType.WOOD && wildTile) {
                     drawIsoTile(sx, sy, TileType.GRASS, lt.height)
                     drawTree(sx, sy, seedFor(wc, wr))
                 } else {
                     drawIsoTile(sx, sy, lt.base, lt.height)
+                }
+                // Растительность на диких клетках — кроме камня и воды
+                if (wildTile && (lt.base == TileType.GRASS || lt.base == TileType.DIRT)) {
+                    drawVegetation(sx, sy, seedFor(wc, wr), lt.base)
                 }
 
                 // Ступень — диагональный переход внутри клетки
@@ -424,12 +431,15 @@ private fun seedFor(col: Int, row: Int): Int {
 /**
  * Дерево: ствол + двухъярусная ромбовидная крона в духе PS1.
  * Дикие WOOD-тайлы теперь читаются как лес, а не как коричневый паркет.
+ * Каждое ~восьмое дерево — неоново-фиолетовое: кибер-готика.
  */
 fun DrawScope.drawTree(cx: Float, cy: Float, seed: Int) {
     val s = 0.85f + (seed and 0x7) * 0.06f            // 0.85..1.27 — разброс размера
-    val trunk = Color(0xFF4A2E14)
-    val leafDark = Color(0xFF1E5E28)
-    val leafMain = if (seed and 0x10 == 0) Color(0xFF2E7D32) else Color(0xFF388E3C)
+    val violet = (seed and 0x38) == 0                  // редкий фиолетовый экземпляр
+    val trunk = Color(0xFF2E2430)
+    val leafDark = if (violet) Color(0xFF3A1E5C) else Color(0xFF14453A)
+    val leafMain = if (violet) Color(0xFF6A34A8)
+                   else if (seed and 0x10 == 0) Color(0xFF1D5C4A) else Color(0xFF256852)
 
     // Ствол
     drawRect(trunk, Offset(cx - 4f * s, cy - 30f * s), Size(8f * s, 30f * s))
@@ -449,6 +459,56 @@ fun DrawScope.drawTree(cx: Float, cy: Float, seed: Int) {
         lineTo(cx - 20f * s, cy - 62f * s)
         close()
     }, leafMain)
+}
+
+/**
+ * Растительность: до трёх пучков/кустов/цветов на клетку, той же техникой,
+ * что и деревья — детерминированно от координат, без мигания. На земле —
+ * только редкие сухие пучки; неоновые головки цветов — акценты кибер-готики.
+ */
+fun DrawScope.drawVegetation(cx: Float, cy: Float, seed: Int, base: TileType) {
+    var bits = seed
+    val maxN = if (base == TileType.DIRT) 1 else 3
+    for (i in 0 until maxN) {
+        val roll = bits and 0xF; bits = bits ushr 4
+        val show = if (base == TileType.DIRT) roll < 2 else roll < 7
+        if (!show) continue
+        // Смещение внутри ромба клетки (сплюснуто по вертикали изометрии)
+        val ox = ((bits and 0x1F) - 15).toFloat(); bits = bits ushr 5
+        val oy = ((bits and 0xF) - 7) * 0.8f; bits = bits ushr 4
+        val px = cx + ox * 0.9f
+        val py = cy + oy
+        val kind = bits and 0x7; bits = bits ushr 3
+        when {
+            base == TileType.DIRT || kind < 3 -> drawTuft(px, py, dry = base == TileType.DIRT)
+            kind < 5                          -> drawBush(px, py)
+            else                              -> drawFlower(px, py, bits)
+        }
+    }
+}
+
+private fun DrawScope.drawTuft(x: Float, y: Float, dry: Boolean) {
+    val c = if (dry) Color(0xFF5C5340) else Color(0xFF2F5D46)
+    drawLine(c, Offset(x, y), Offset(x - 3f, y - 7f), strokeWidth = 1.8f)
+    drawLine(c, Offset(x, y), Offset(x, y - 9f), strokeWidth = 1.8f)
+    drawLine(c, Offset(x, y), Offset(x + 3f, y - 6f), strokeWidth = 1.8f)
+}
+
+private fun DrawScope.drawBush(x: Float, y: Float) {
+    drawCircle(Color(0xFF1E4034), 6f, Offset(x, y - 4f))
+    drawCircle(Color(0xFF2A5644), 4f, Offset(x + 3f, y - 7f))
+}
+
+private fun DrawScope.drawFlower(x: Float, y: Float, bits: Int) {
+    drawLine(Color(0xFF3A5A4A), Offset(x, y), Offset(x, y - 6f), strokeWidth = 1.5f)
+    val head = when (bits and 0x3) {
+        0    -> Color(0xFF00E5FF)  // неоновый циан
+        1    -> Color(0xFFE040FB)  // фуксия
+        2    -> Color(0xFF9C7BFF)  // фиолет
+        else -> Color(0xFFFF5370)  // алый
+    }
+    drawCircle(head.copy(alpha = 0.35f), 4.5f, Offset(x, y - 7f))  // свечение
+    drawCircle(head, 2.6f, Offset(x, y - 7f))
 }
 
 fun DrawScope.drawStairOverlay(cx: Float, cy: Float, stair: StairInfo, material: TileType) {
