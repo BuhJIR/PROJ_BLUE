@@ -67,7 +67,9 @@ object BehaviourExecutor {
         val blocked = engine.occupiedCells(except = setOf(entity.id))
             .let { if (stopShort) it - (tx to ty) else it }
         val path = Pathfinder.findPath(entity.col, entity.row, tx, ty, map, blocked) ?: return
-        val walk = if (stopShort) path.dropLast(1) else path
+        // NPC проходит максимум moveRange клеток за пробуждение — дальняя цель
+        // достигается за несколько «ходов», как фигура, а не телепорт
+        val walk = (if (stopShort) path.dropLast(1) else path).take(entity.moveRange)
         if (walk.isNotEmpty()) engine.executePath(entity.id, walk)
     }
 
@@ -86,14 +88,14 @@ object BehaviourExecutor {
             else               -> 0
         }
         // Пробуем убежать подальше; если путь не находится — короче; в упор — хотя бы шаг
-        for (dist in intArrayOf(4, 2)) {
+        for (dist in intArrayOf(entity.moveRange, 2)) {
             val tx = entity.x + sx * dist
             val ty = entity.y + sy * dist
             if (map.isWalkable(tx, ty)) {
                 val blocked = engine.occupiedCells(except = setOf(entity.id))
                 val path = Pathfinder.findPath(entity.col, entity.row, tx, ty, map, blocked)
                 if (!path.isNullOrEmpty()) {
-                    engine.executePath(entity.id, path)
+                    engine.executePath(entity.id, path.take(entity.moveRange))
                     return
                 }
             }

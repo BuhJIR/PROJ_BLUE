@@ -23,8 +23,7 @@
     }
   },
   "enemies": {
-    "enemy_skull": { "frameW": 171, "frameH": 120, "frames": 2, "fps": 2 },
-    "enemy_red":   { "frameW": 179, "frameH": 120, "frames": 2, "fps": 2 }
+    "skeleton_mage": { "frameW": 60, "frameH": 112, "frames": 2, "fps": 2 }
   },
   "backgrounds": {
     "battle_plains": "backgrounds/battle_bg_1.jpg",

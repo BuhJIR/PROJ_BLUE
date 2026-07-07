@@ -165,6 +165,7 @@ object GameStatePersistence {
             .put("mp", e.mp).put("maxMp", e.maxMp)
             .put("x", e.x).put("y", e.y)
             .put("interestRadius", e.interestRadius.toDouble())
+            .put("moveRange", e.moveRange)
         o.put("flags", JSONArray(e.flags.toList()))
         o.put("groups", JSONArray().apply {
             e.registeredGroups().forEach { g ->
@@ -193,6 +194,7 @@ object GameStatePersistence {
             interestRadius = o.optDouble("interestRadius", 192.0).toFloat(),
             id = o.getString("id"),
         )
+        e.moveRange = o.optInt("moveRange", 4)
         o.optJSONArray("flags")?.let { arr ->
             for (i in 0 until arr.length()) e.addFlag(arr.getString(i))
         }
