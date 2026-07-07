@@ -72,6 +72,8 @@ import androidx.navigation.navArgument
 import com.google.ai.edge.gallery.GalleryEvent
 import com.google.ai.edge.gallery.customtasks.common.CustomTaskData
 import com.google.ai.edge.gallery.customtasks.common.CustomTaskDataForBuiltinTask
+import com.google.ai.edge.gallery.customtasks.tinygarden.Ps1TitleScreen
+import com.google.ai.edge.gallery.data.BuiltInTaskId
 import com.google.ai.edge.gallery.data.ModelDownloadStatusType
 import com.google.ai.edge.gallery.data.Task
 import com.google.ai.edge.gallery.data.isLegacyTasks
@@ -91,6 +93,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 private const val TAG = "AGGalleryNavGraph"
+private const val ROUTE_TITLE = "title"
 private const val ROUTE_HOMESCREEN = "homepage"
 private const val ROUTE_MODEL_LIST = "model_list"
 private const val ROUTE_MODEL = "route_model"
@@ -182,10 +185,21 @@ fun GalleryNavHost(
 
   NavHost(
     navController = navController,
-    startDestination = ROUTE_HOMESCREEN,
+    startDestination = ROUTE_TITLE,
     enterTransition = { EnterTransition.None },
     exitTransition = { ExitTransition.None },
   ) {
+    // PS1 title screen — the app now boots straight into the game menu.
+    composable(route = ROUTE_TITLE) {
+      Ps1TitleScreen(
+        modelManagerViewModel = modelManagerViewModel,
+        onStartGame = { model ->
+          navController.navigate("$ROUTE_MODEL/${BuiltInTaskId.LLM_TINY_GARDEN}/${model.name}")
+        },
+        onOpenGallery = { navController.navigate(ROUTE_HOMESCREEN) },
+      )
+    }
+
     // Home screen.
     composable(route = ROUTE_HOMESCREEN) {
       Box(modifier = modifier.fillMaxSize()) {
