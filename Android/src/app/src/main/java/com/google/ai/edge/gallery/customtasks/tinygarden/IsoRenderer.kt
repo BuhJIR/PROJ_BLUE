@@ -78,6 +78,8 @@ data class IsoMap(
     // Передаётся живой HashMap движка по ссылке: applyStructure видна сразу,
     // без пересборки буфера. tileAt/isWalkable/Pathfinder читают их одинаково.
     val overrides: Map<Pair<Int, Int>, LayeredTileEx> = emptyMap(),
+    // Seed мира: теперь часть состояния, а не константа — NEW GAME даёт новый мир
+    val seed: Long = WORLD_SEED,
 ) {
     // localCol/localRow → индекс в массиве
     private fun local(worldCol: Int, worldRow: Int): Pair<Int,Int> {
@@ -91,7 +93,7 @@ data class IsoMap(
         val (lc, lr) = local(worldCol, worldRow)
         if (lc in 0 until cols && lr in 0 until rows) return tiles[lr][lc]
         // За пределами — генерируем на лету из глобального noise (без обрыва)
-        return generateTile(worldCol, worldRow, WORLD_SEED)
+        return generateTile(worldCol, worldRow, seed)
     }
 
     /** Полный тайл постройки (с лестницей) на этой клетке, если есть. */
@@ -103,35 +105,75 @@ data class IsoMap(
     }
 
     companion object {
-        // Единый глобальный seed — не меняется никогда
+        // Seed по умолчанию (для миров, созданных до NEW GAME)
         const val WORLD_SEED = 14159265358979323L
     }
 }
 
+// ── Hash-noise: непериодичный, детерминированный по seed ──────────────────────
+// Прежний генератор строился на sin/cos — тригонометрия периодична, и мир
+// обязан был повторяться каждые ~35–100 тайлов. Здесь splitmix64-хэш решётки
+// + value noise: тот же seed → тот же мир, но узор не зацикливается никогда.
+
+private const val GOLDEN = -0x61c8864680b583ebL  // 0x9E3779B97F4A7C15
+private const val MIX_1  = -0x40a7b892e31b1a47L  // 0xBF58476D1CE4E5B9
+private const val MIX_2  = -0x6b2fb644ecceee15L  // 0x94D049BB133111EB
+private const val Y_STEP = -0x3d4d51c2d82b14b1L  // 0xC2B2AE3D27D4EB4F
+private const val CH_STEP = 0x632BE59BD9B4E019L
+
+private fun mix64(z0: Long): Long {
+    var z = z0 + GOLDEN
+    z = (z xor (z ushr 30)) * MIX_1
+    z = (z xor (z ushr 27)) * MIX_2
+    return z xor (z ushr 31)
+}
+
+/** Значение решётки в [0,1] для целой точки (x,y); channel разводит слои шума. */
+private fun lattice(x: Int, y: Int, seed: Long, channel: Long): Float {
+    val h = mix64(seed + channel * CH_STEP + x * GOLDEN + y * Y_STEP)
+    return ((h ushr 40) and 0xFFFFFF).toFloat() / 0xFFFFFF
+}
+
+/** Value noise: билинейная интерполяция решётки со smoothstep. */
+private fun valueNoise(x: Float, y: Float, seed: Long, channel: Long): Float {
+    val x0 = kotlin.math.floor(x).toInt()
+    val y0 = kotlin.math.floor(y).toInt()
+    val tx = x - x0
+    val ty = y - y0
+    val sx = tx * tx * (3f - 2f * tx)
+    val sy = ty * ty * (3f - 2f * ty)
+    val v00 = lattice(x0, y0, seed, channel)
+    val v10 = lattice(x0 + 1, y0, seed, channel)
+    val v01 = lattice(x0, y0 + 1, seed, channel)
+    val v11 = lattice(x0 + 1, y0 + 1, seed, channel)
+    val top = v00 + (v10 - v00) * sx
+    val bot = v01 + (v11 - v01) * sx
+    return top + (bot - top) * sy
+}
+
+/** 3 октавы value noise, результат в [0,1]. */
+private fun fbm(x: Float, y: Float, seed: Long, channel: Long): Float =
+    valueNoise(x, y, seed, channel) * 0.5f +
+    valueNoise(x * 2.1f, y * 2.1f, seed, channel + 7) * 0.3f +
+    valueNoise(x * 4.3f, y * 4.3f, seed, channel + 13) * 0.2f
+
 // ── Процедурная генерация тайла по мировым координатам (детерминированно) ─────
 fun generateTile(worldCol: Int, worldRow: Int, seed: Long): LayeredTile {
-    val nx = worldCol * 0.18
-    val ny = worldRow * 0.21
-    val s  = seed * 0.000000001
+    val terrain = fbm(worldCol * 0.09f, worldRow * 0.09f, seed, channel = 1)   // рельеф
+    val heightN = fbm(worldCol * 0.045f, worldRow * 0.045f, seed, channel = 2) // высоты
+    val scatter = lattice(worldCol, worldRow, seed, channel = 3)               // точечный разброс
 
-    val noise = (sin(ny + s)          * 0.55 +
-                 cos(nx * 1.3 + s)    * 0.45 +
-                 sin(nx + ny)         * 0.40 +
-                 sin(nx * 2.1 - ny)   * 0.20).toFloat()
-
-    val hn    = (sin(worldRow * 0.12 + s) * 0.4 +
-                 cos(worldCol * 0.15 + s) * 0.4 +
-                 sin((worldCol + worldRow) * 0.08) * 0.2).toFloat()
-
+    // Пороги подобраны симуляцией: ~64% трава, 20% земля, 12% камень,
+    // ~2% вода (низкая частота собирает её в озёра), ~2% лес
     val base = when {
-        noise >  1.1f -> TileType.WATER
-        noise >  0.8f -> TileType.STONE
-        noise >  0.5f -> TileType.DIRT
-        (worldCol + worldRow) % 7 == 0 && noise > 0f -> TileType.WOOD
-        else          -> TileType.GRASS
+        terrain > 0.75f  -> TileType.WATER
+        terrain > 0.65f  -> TileType.STONE
+        terrain > 0.56f  -> TileType.DIRT
+        scatter > 0.965f -> TileType.WOOD
+        else             -> TileType.GRASS
     }
     val height = if (base == TileType.WATER) 0
-                 else ((hn + 1f) * 2f).toInt().coerceIn(0, 4)
+                 else (heightN * 5f).toInt().coerceIn(0, 4)
     return LayeredTile(base, height)
 }
 
@@ -140,15 +182,16 @@ fun generateMapAround(
     centerCol: Int, centerRow: Int,
     cols: Int = 48, rows: Int = 48,
     overrides: Map<Pair<Int, Int>, LayeredTileEx> = emptyMap(),
+    seed: Long = IsoMap.WORLD_SEED,
 ): IsoMap {
     val tiles = Array(rows) { r ->
         Array(cols) { c ->
             val wc = c - cols / 2 + centerCol
             val wr = r - rows / 2 + centerRow
-            generateTile(wc, wr, IsoMap.WORLD_SEED)
+            generateTile(wc, wr, seed)
         }
     }
-    return IsoMap(cols, rows, centerCol, centerRow, tiles, overrides)
+    return IsoMap(cols, rows, centerCol, centerRow, tiles, overrides, seed)
 }
 
 // ── Направления ───────────────────────────────────────────────────────────────
@@ -206,16 +249,17 @@ fun IsoMapRenderer(
         mutableStateOf(engine?.worldMap ?: generateMapAround(0, 0))
     }
     val player = gameState.player
-    LaunchedEffect(player.col, player.row) {
+    LaunchedEffect(player.col, player.row, gameState.worldSeed) {
         val halfC = liveMap.cols / 2
         val halfR = liveMap.rows / 2
         val dc = player.col - liveMap.centerCol
         val dr = player.row - liveMap.centerRow
-        // Рестартуем буфер если игрок ближе 8 тайлов к краю
-        if (abs(dc) > halfC - 8 || abs(dr) > halfR - 8) {
+        // Рестартуем буфер если игрок ближе 8 тайлов к краю или сменился seed (NEW GAME)
+        if (abs(dc) > halfC - 8 || abs(dr) > halfR - 8 || gameState.worldSeed != liveMap.seed) {
             liveMap = generateMapAround(
                 player.col, player.row,
                 overrides = engine?.structureOverrides ?: emptyMap(),
+                seed = gameState.worldSeed,
             )
             engine?.updateWorldMap(liveMap)
         }

@@ -17,7 +17,7 @@ import com.google.ai.edge.litertlm.tool
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
 
-private const val SYSTEM_PROMPT =
+internal const val TINY_GARDEN_SYSTEM_PROMPT =
   "Ты — Душа. Живой Мастер игры. Саркастичный, холодный, точный.\n" +
   "Говоришь КОРОТКО — 1-2 предложения. Никаких монологов. Каждое слово весит.\n" +
   "Описываешь только МИР — запахи, звуки, опасность. Не пересказываешь действия игрока.\n" +
@@ -61,7 +61,7 @@ class TinyGardenTask @Inject constructor(
       models = mutableListOf(),
       handleModelConfigChangesInTask = true,
       experimental = true,
-      defaultSystemPrompt = SYSTEM_PROMPT,
+      defaultSystemPrompt = TINY_GARDEN_SYSTEM_PROMPT,
     )
 
   override fun initializeModelFn(
@@ -81,7 +81,7 @@ class TinyGardenTask @Inject constructor(
       supportImage = false,
       supportAudio = false,
       onDone = onDone,
-      systemInstruction = Contents.of(SYSTEM_PROMPT),
+      systemInstruction = Contents.of(TINY_GARDEN_SYSTEM_PROMPT),
       tools = listOf(tool(aiBridge)),
       enableConversationConstrainedDecoding = true,
     )

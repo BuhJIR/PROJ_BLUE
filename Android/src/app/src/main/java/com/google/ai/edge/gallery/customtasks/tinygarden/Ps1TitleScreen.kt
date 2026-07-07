@@ -48,6 +48,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.hilt.navigation.compose.hiltViewModel
 import com.google.ai.edge.gallery.R
 import com.google.ai.edge.gallery.data.BuiltInTaskId
 import com.google.ai.edge.gallery.data.Model
@@ -75,9 +76,11 @@ fun Ps1TitleScreen(
   modelManagerViewModel: ModelManagerViewModel,
   onStartGame: (Model) -> Unit,
   onOpenGallery: () -> Unit,
+  gameViewModel: TinyGardenViewModel = hiltViewModel(),
 ) {
   val context = LocalContext.current
   val uiState by modelManagerViewModel.uiState.collectAsState()
+  var saveExists by remember { mutableStateOf(gameViewModel.hasSave()) }
 
   // Модели, доступные игре. Чтение updateTrigger/modelImportingUpdateTrigger
   // подписывает композицию на появление свежеимпортированной модели.
@@ -175,12 +178,27 @@ fun Ps1TitleScreen(
         horizontalAlignment = Alignment.Start,
         verticalArrangement = Arrangement.spacedBy(18.dp),
       ) {
+        if (saveExists) {
+          Ps1MenuItem(
+            label = "CONTINUE",
+            font = pixelFont,
+            enabled = selectedModel != null,
+            cursorAlpha = if (selectedModel != null) blink else 0f,
+            onClick = { selectedModel?.let(onStartGame) },
+          )
+        }
         Ps1MenuItem(
-          label = "START",
+          label = "NEW GAME",
           font = pixelFont,
           enabled = selectedModel != null,
-          cursorAlpha = if (selectedModel != null) blink else 0f,
-          onClick = { selectedModel?.let(onStartGame) },
+          cursorAlpha = if (selectedModel != null && !saveExists) blink else 0f,
+          onClick = {
+            selectedModel?.let { model ->
+              gameViewModel.startNewGame()
+              saveExists = false
+              onStartGame(model)
+            }
+          },
         )
         if (models.size > 1) {
           Ps1MenuItem(

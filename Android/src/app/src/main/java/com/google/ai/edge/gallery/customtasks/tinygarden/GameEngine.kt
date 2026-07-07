@@ -119,6 +119,8 @@ data class GameState(
     val worldLaw: String = DEFAULT_WORLD_LAW,
     // Локальный, аддитивный лор поселений: ключ — id региона/поселения
     val settlementLore: Map<String, String> = emptyMap(),
+    // Seed мира — «NEW GAME» генерирует новый, сейв хранит свой
+    val worldSeed: Long = IsoMap.WORLD_SEED,
 ) {
     fun getEnemies() = entities.values.filter { it.hasFlag("ENEMY") }
     fun getLiving() = entities.values.filter { it.isAlive() }
@@ -446,7 +448,10 @@ class GameEngine {
         structureOverrides.putAll(overrides)
         spatialHash.insert(newState.player)
         newState.entities.values.forEach { spatialHash.insert(it) }
+        worldMap = generateMapAround(newState.player.col, newState.player.row,
+            overrides = structureOverrides, seed = newState.worldSeed)
         updateState { newState }
+        logMessage("World restored — ${overrides.size} built tiles, ${newState.entities.size} souls.")
     }
 
     // ── Структуры (зиккураты, здания) от StructureDSL ─────────────────────────
@@ -458,11 +463,27 @@ class GameEngine {
      * Живая карта мира. Рендерер пересобирает буфер вокруг игрока и передаёт
      * сюда — Pathfinder и BehaviourExecutor всегда работают с актуальной картой.
      */
-    var worldMap: IsoMap = generateMapAround(0, 0, overrides = structureOverrides)
+    var worldMap: IsoMap = generateMapAround(0, 0, overrides = structureOverrides, seed = state.worldSeed)
         private set
 
     fun updateWorldMap(map: IsoMap) {
         worldMap = map
+    }
+
+    /**
+     * Новый мир: свежий seed, чистые постройки и entity, игрок в начале.
+     * Разговорная память Души этим не трогается — она живёт в модели.
+     */
+    fun newGame(seed: Long) {
+        spatialHash.clear()
+        structureOverrides.clear()
+        npcProfiles.clear()
+        val fresh = GameState(worldSeed = seed)
+        spatialHash.insert(fresh.player)
+        worldMap = generateMapAround(fresh.player.col, fresh.player.row,
+            overrides = structureOverrides, seed = seed)
+        updateState { fresh }
+        logMessage("A new world breathes. Seed: $seed")
     }
 
     fun applyStructure(tiles: List<Triple<Int, Int, LayeredTileEx>>) {
