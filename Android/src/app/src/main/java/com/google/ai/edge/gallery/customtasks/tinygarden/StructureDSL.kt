@@ -90,6 +90,7 @@ object StructureGenerator {
         centerRow: Int,
         baseSize: Int = 7,       // размер нижнего яруса (нечётное — есть центр)
         margin: Int = 1,         // на сколько уменьшается каждый следующий ярус
+        baseHeight: Int = 0,     // высота земли: постройка растёт ОТ рельефа, не от нуля
     ): List<Triple<Int, Int, LayeredTileEx>> {
         val result = mutableListOf<Triple<Int, Int, LayeredTileEx>>()
 
@@ -97,7 +98,7 @@ object StructureGenerator {
         for (level in 0 until spec.levels) {
             val size = baseSize - level * margin * 2
             if (size <= 0) break
-            placeSquare(result, spec.material, centerCol, centerRow, size, level)
+            placeSquare(result, spec.material, centerCol, centerRow, size, baseHeight + level)
 
             // Ступени — на каждой границе ярусов, по центру одной из сторон
             if (spec.hasStairs && level > 0) {
@@ -107,8 +108,8 @@ object StructureGenerator {
                 result.add(Triple(
                     stairCol, stairRow,
                     LayeredTileEx(
-                        spec.material, level - 1,
-                        StairInfo(level - 1, level, StepDirection.SOUTH)
+                        spec.material, baseHeight + level - 1,
+                        StairInfo(baseHeight + level - 1, baseHeight + level, StepDirection.SOUTH)
                     )
                 ))
             }
@@ -121,7 +122,7 @@ object StructureGenerator {
             var level = spec.levels
             var size = baseSize - spec.levels * margin * 2
             while (size >= 1) {
-                placeSquare(result, spec.material, centerCol, centerRow, size, level)
+                placeSquare(result, spec.material, centerCol, centerRow, size, baseHeight + level)
                 size -= margin * 2
                 level++
             }
@@ -146,7 +147,10 @@ object StructureGenerator {
 
     /** Применяет сгенерированную структуру к живой карте движка. */
     fun applyToEngine(spec: StructureSpec, centerCol: Int, centerRow: Int, engine: GameEngine) {
-        val tiles = generate(spec, centerCol, centerRow)
+        // Постройка растёт от рельефа: первый ярус на 1 выше земли под центром,
+        // иначе на холмах здания тонут в грунте и читаются как «серые плато»
+        val groundH = engine.worldMap.tileAt(centerCol, centerRow).height
+        val tiles = generate(spec, centerCol, centerRow, baseHeight = groundH + 1)
         engine.applyStructure(tiles)
     }
 }
