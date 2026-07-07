@@ -6,6 +6,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.ai.edge.gallery.R
 import com.google.ai.edge.gallery.data.BuiltInTaskId
+import com.google.ai.edge.gallery.data.ConfigKeys
 import com.google.ai.edge.gallery.data.DataStoreRepository
 import com.google.ai.edge.gallery.data.Model
 import com.google.ai.edge.gallery.ui.common.chat.ChatMessage
@@ -84,6 +85,16 @@ constructor(
       super.onCleared()
   }
 
+  /** Есть ли сохранённый мир (для CONTINUE на титульнике). */
+  fun hasSave(): Boolean = saveFile.exists()
+
+  /** NEW GAME: стирает сейв и создаёт мир с новым случайным seed. */
+  fun startNewGame() {
+      saveFile.delete()
+      engine.restoreAttempted = true // не дать более позднему load() затереть новый мир
+      engine.newGame(kotlin.random.Random.Default.nextLong())
+  }
+
   fun getCommand(
     model: Model,
     instructionText: String,
@@ -130,6 +141,9 @@ constructor(
 
         addMessage(message = ChatMessageText(content = response, side = ChatSide.AGENT))
         onDone(response)
+        // Комбо памяти: на пороге N ходов Душа перерождается.
+        // Слайдер RESET_CONVERSATION_TURN_COUNT существовал, но его никто не читал.
+        maybeRebirth(model)
       } catch (e: Exception) {
         onError(e.message ?: context.getString(R.string.unknown_error))
       } finally {
@@ -141,6 +155,69 @@ constructor(
   /** Добавить сообщение игрока в историю без отправки модели. */
   fun addPlayerMessage(text: String) {
     addMessage(message = ChatMessageText(content = text, side = ChatSide.USER))
+  }
+
+  // ── Перерождение Души: контекст модели не бесконечен ────────────────────────
+
+  private var rebirthing = false
+
+  /**
+   * Каждые N ходов (настройка «Number of turns before the conversation resets»)
+   * разговорная память Души сбрасывается — мир при этом не трогается.
+   * Новая беседа стартует с «моста памяти»: краткой сводки мира, чтобы Душа
+   * продолжила вести его без провала. Порог виден в HUD как комбо.
+   */
+  private fun maybeRebirth(model: Model) {
+    // Порог 1 дал бы перерождение после каждого хода, включая сам мост — клампим
+    val threshold = model
+      .getIntConfigValue(ConfigKeys.RESET_CONVERSATION_TURN_COUNT, 3)
+      .coerceAtLeast(2)
+    if (rebirthing || uiState.value.numTurns < threshold) return
+    rebirthing = true
+    viewModelScope.launch(Dispatchers.Default) {
+      _isResettingConversation.value = true
+      try {
+        LlmChatModelHelper.resetConversation(
+          model = model,
+          supportImage = false,
+          supportAudio = false,
+          systemInstruction = Contents.of(TINY_GARDEN_SYSTEM_PROMPT),
+          tools = listOf(com.google.ai.edge.litertlm.tool(aiBridge)),
+          enableConversationConstrainedDecoding = true,
+          initialMessages = listOf(),
+        )
+        resetNumTurns()
+        engine.logMessage("The Soul sheds its memory — and wakes anew.")
+        addMessage(
+          ChatMessageText(
+            content = "— Душа переродилась: память растворилась, мир остался —",
+            side = ChatSide.SYSTEM,
+          )
+        )
+        _isResettingConversation.value = false
+        // Мост памяти: первый ход новой беседы — сводка живого мира
+        getCommand(model, memoryBridge(), onDone = {}, onError = {})
+      } catch (e: Exception) {
+        Log.e(TAG, "Soul rebirth failed", e)
+        _isResettingConversation.value = false
+      } finally {
+        rebirthing = false
+      }
+    }
+  }
+
+  private fun memoryBridge(): String {
+    val s = engine.currentState()
+    return buildString {
+      append("(Пробуждение после перерождения. Закон мира: ${s.worldLaw} ")
+      append("Герой в (${s.player.col}, ${s.player.row}), HP ${s.player.hp}/${s.player.maxHp}. ")
+      if (s.entities.isNotEmpty()) {
+        append("Рядом: ${s.entities.values.take(4).joinToString { "${it.name}(${it.col},${it.row})" }}. ")
+      }
+      val recent = s.battleLog.takeLast(3)
+      if (recent.isNotEmpty()) append("Недавнее: ${recent.joinToString(" | ")}. ")
+      append("Продолжай вести мир как ни в чём не бывало.)")
+    }
   }
 
   fun addMessage(message: ChatMessage) {

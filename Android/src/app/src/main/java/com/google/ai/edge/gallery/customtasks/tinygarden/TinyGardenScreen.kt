@@ -12,6 +12,7 @@ import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -28,9 +29,12 @@ import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.Font
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.google.ai.edge.gallery.data.ConfigKeys
 import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.google.ai.edge.gallery.R
@@ -140,7 +144,9 @@ fun MainUi(
       (!modelManagerUiState.isModelInitialized(model = model) || uiState.processing)
   )
   BackHandler(enabled = showConversationHistoryPanel) { showConversationHistoryPanel = false }
-  LaunchedEffect(showConversationHistoryPanel) { setTopBarVisible(!showConversationHistoryPanel) }
+  // В игре верхней панели нет вовсе — ни кнопки назад, ни названия.
+  // Выход — системный жест назад; настройка порога памяти — тап по HUD.
+  LaunchedEffect(Unit) { setTopBarVisible(false) }
 
   val noFunctionCallWarningMessage = stringResource(R.string.warning_no_function_call)
   val noFunctionCallSnackbarMessage = stringResource(R.string.snackbar_no_function_call)
@@ -169,11 +175,36 @@ fun MainUi(
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
       Column(modifier = Modifier.padding(bottom = if (WindowInsets.ime.getBottom(LocalDensity.current) == 0) bottomPadding else 12.dp).fillMaxSize()) {
         Column(modifier = Modifier.weight(1f).fillMaxWidth().padding(16.dp)) {
-          GameRenderer(
-            gameState = uiState.gameState,
-            engine = viewModel.engine,
-            modifier = Modifier.fillMaxWidth().weight(1f).border(2.dp, Color(0xFF223344), RoundedCornerShape(4.dp))
-          )
+          val pixelFont = remember { FontFamily(Font(R.font.pixel_04b03)) }
+          // Порог перерождения Души — читается из конфига модели, тап по HUD
+          // циклически переключает пресеты (тот же ключ, что и слайдер настроек)
+          var memThreshold by remember(model.name) {
+            mutableIntStateOf(
+              model.getIntConfigValue(ConfigKeys.RESET_CONVERSATION_TURN_COUNT, 3).coerceAtLeast(2)
+            )
+          }
+          Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
+            GameRenderer(
+              gameState = uiState.gameState,
+              engine = viewModel.engine,
+              modifier = Modifier.fillMaxSize().border(2.dp, Color(0xFF223344), RoundedCornerShape(4.dp))
+            )
+            SoulMemoryHud(
+              turns = uiState.numTurns,
+              threshold = memThreshold,
+              font = pixelFont,
+              modifier = Modifier.align(Alignment.TopEnd).padding(10.dp),
+              onTap = {
+                val presets = listOf(3, 6, 9, 12, 18, 30)
+                val cur = presets.indexOf(memThreshold)
+                val next = presets[(if (cur < 0) 0 else cur + 1) % presets.size]
+                memThreshold = next
+                model.configValues = model.configValues.toMutableMap().apply {
+                  put(ConfigKeys.RESET_CONVERSATION_TURN_COUNT.label, next.toFloat())
+                }
+              },
+            )
+          }
           Spacer(modifier = Modifier.height(8.dp))
 
           // ── Кнопка [Идти] — появляется когда путь выбран ──────────────────
@@ -323,5 +354,56 @@ fun MainUi(
         ) { Text(stringResource(R.string.reset), color = Color.White) }
       },
     )
+  }
+}
+
+/**
+ * HUD памяти Души — «комбо» из ходов до перерождения разговора.
+ * Сегменты расходуются с каждым ходом; на пороге память Души сбрасывается
+ * (мир остаётся), новая беседа стартует с моста памяти. Тап — сменить порог.
+ */
+@Composable
+private fun SoulMemoryHud(
+  turns: Int,
+  threshold: Int,
+  font: androidx.compose.ui.text.font.FontFamily,
+  onTap: () -> Unit,
+  modifier: Modifier = Modifier,
+) {
+  val left = (threshold - turns).coerceAtLeast(0)
+  val fillColor = when {
+    left <= 1 -> Color(0xFFDD2222)
+    left * 3 <= threshold -> Color(0xFFDDCC00)
+    else -> Color(0xFF44DD44)
+  }
+  Column(
+    horizontalAlignment = Alignment.End,
+    modifier =
+      modifier
+        .background(Color(0xCC000814), RoundedCornerShape(4.dp))
+        .border(1.dp, Color(0x5500CFFF), RoundedCornerShape(4.dp))
+        .clickable(onClick = onTap)
+        .padding(horizontal = 8.dp, vertical = 5.dp),
+  ) {
+    Text(
+      "SOUL MEM ${turns.coerceAtMost(threshold)}/$threshold",
+      fontFamily = font,
+      fontSize = 10.sp,
+      color = Color(0xFFB0E0FF),
+    )
+    Spacer(modifier = Modifier.height(3.dp))
+    Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+      val segCount = threshold.coerceAtMost(12)
+      val filled =
+        if (threshold == 0) 0
+        else ((turns.coerceAtMost(threshold)) * segCount + threshold - 1) / threshold
+      repeat(segCount) { i ->
+        Box(
+          modifier =
+            Modifier.size(width = 8.dp, height = 6.dp)
+              .background(if (i < filled) fillColor else Color(0xFF223344))
+        )
+      }
+    }
   }
 }

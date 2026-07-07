@@ -38,6 +38,7 @@ object GameStatePersistence {
         root.put("version", VERSION)
         root.put("mode", state.mode.name)
         root.put("turn", state.turn)
+        root.put("worldSeed", state.worldSeed)
         root.put("worldLaw", state.worldLaw)
         root.put("settlementLore", JSONObject(state.settlementLore as Map<*, *>))
         state.activeSister?.let { root.put("activeSisterId", it.id) }
@@ -149,6 +150,7 @@ object GameStatePersistence {
                 ?.let { Sisters.byId(it) },
             worldLaw = root.optString("worldLaw").ifEmpty { DEFAULT_WORLD_LAW },
             settlementLore = lore,
+            worldSeed = root.optLong("worldSeed", IsoMap.WORLD_SEED),
         )
         engine.restore(state, overrides)
         true
