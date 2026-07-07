@@ -1,5 +1,6 @@
 package com.google.ai.edge.gallery.customtasks.tinygarden
 
+import android.util.Log
 import java.util.UUID
 import kotlin.math.sqrt
 import kotlin.math.abs
@@ -176,7 +177,9 @@ class GameEngine {
             val dist = entity.distanceTo(event.x, event.y)
             val stimulusStrength = event.intensityAt(dist)
             if (stimulusStrength > 0.05f) {
-                wakeEntity(entity, event, stimulusStrength)
+                // Сбой одного entity не должен убивать всю волну (SPEC §9)
+                runCatching { wakeEntity(entity, event, stimulusStrength) }
+                    .onFailure { Log.e("GameEngine", "wakeEntity failed for ${entity.name}", it) }
             }
         }
         // Игрок тоже реагирует на события
@@ -235,6 +238,8 @@ class GameEngine {
         if (executingBehaviours.add(entity.id)) {
             try {
                 BehaviourExecutor.execute(entity, this)
+            } catch (e: Exception) {
+                Log.e("GameEngine", "behaviour execution failed for ${entity.name}", e)
             } finally {
                 executingBehaviours.remove(entity.id)
             }

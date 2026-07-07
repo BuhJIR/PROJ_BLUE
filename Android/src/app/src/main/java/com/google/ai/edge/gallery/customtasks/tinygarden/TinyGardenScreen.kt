@@ -236,7 +236,7 @@ fun MainUi(
                     }
                   )
                 },
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF005588)),
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF5A1E8C)),
                 modifier = Modifier.weight(1f),
               ) {
                 Text("⚡ Идти", color = Color.White)
@@ -263,8 +263,8 @@ fun MainUi(
 
           Row(
             modifier = Modifier.fillMaxWidth()
-              .border(4.dp, Color.White, RoundedCornerShape(8.dp))
-              .background(Brush.verticalGradient(listOf(Color(0xFF0000AA), Color(0xFF000033))), RoundedCornerShape(8.dp))
+              .border(4.dp, Color(0xFFCFC3E8), RoundedCornerShape(8.dp))
+              .background(Brush.verticalGradient(listOf(Color(0xFF2A0F3D), Color(0xFF0A0514))), RoundedCornerShape(8.dp))
               .padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
             verticalAlignment = Alignment.CenterVertically
           ) {
