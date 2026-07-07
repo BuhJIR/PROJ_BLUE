@@ -100,8 +100,10 @@ data class IsoMap(
     fun structureAt(worldCol: Int, worldRow: Int): LayeredTileEx? = overrides[worldCol to worldRow]
 
     fun isWalkable(col: Int, row: Int): Boolean {
+        // Постройки проходимы (кроме воды в них); дикий WOOD — дерево, преграда
+        overrides[col to row]?.let { return it.base != TileType.WATER }
         val t = tileAt(col, row).base
-        return t != TileType.WATER
+        return t != TileType.WATER && t != TileType.WOOD
     }
 
     companion object {
@@ -307,7 +309,13 @@ fun IsoMapRenderer(
                 if (sx < -TILE_W || sx > size.width + TILE_W) continue
                 if (sy < -TILE_H * 6 || sy > size.height + TILE_H * 6) continue
 
-                drawIsoTile(sx, sy, lt.base, lt.height)
+                // Дикий WOOD — дерево на траве; WOOD в постройке — материал
+                if (lt.base == TileType.WOOD && liveMap.structureAt(wc, wr) == null) {
+                    drawIsoTile(sx, sy, TileType.GRASS, lt.height)
+                    drawTree(sx, sy, seedFor(wc, wr))
+                } else {
+                    drawIsoTile(sx, sy, lt.base, lt.height)
+                }
 
                 // Ступень — диагональный переход внутри клетки
                 liveMap.structureAt(wc, wr)?.stair?.let { stair ->
@@ -404,6 +412,43 @@ fun isoRhombus(cx: Float, cy: Float): Path = Path().apply {
     lineTo(cx,           cy + TILE_H2)
     lineTo(cx - TILE_W2, cy)
     close()
+}
+
+/** Детерминированная «личность» дерева на клетке — размер/оттенок не мигают. */
+private fun seedFor(col: Int, row: Int): Int {
+    var h = col * 374761393 + row * 668265263
+    h = (h xor (h shr 13)) * 1274126177
+    return h xor (h shr 16)
+}
+
+/**
+ * Дерево: ствол + двухъярусная ромбовидная крона в духе PS1.
+ * Дикие WOOD-тайлы теперь читаются как лес, а не как коричневый паркет.
+ */
+fun DrawScope.drawTree(cx: Float, cy: Float, seed: Int) {
+    val s = 0.85f + (seed and 0x7) * 0.06f            // 0.85..1.27 — разброс размера
+    val trunk = Color(0xFF4A2E14)
+    val leafDark = Color(0xFF1E5E28)
+    val leafMain = if (seed and 0x10 == 0) Color(0xFF2E7D32) else Color(0xFF388E3C)
+
+    // Ствол
+    drawRect(trunk, Offset(cx - 4f * s, cy - 30f * s), Size(8f * s, 30f * s))
+    // Нижний ярус кроны
+    drawPath(Path().apply {
+        moveTo(cx, cy - 78f * s)
+        lineTo(cx + 30f * s, cy - 40f * s)
+        lineTo(cx, cy - 22f * s)
+        lineTo(cx - 30f * s, cy - 40f * s)
+        close()
+    }, leafDark)
+    // Верхний ярус кроны
+    drawPath(Path().apply {
+        moveTo(cx, cy - 96f * s)
+        lineTo(cx + 20f * s, cy - 62f * s)
+        lineTo(cx, cy - 44f * s)
+        lineTo(cx - 20f * s, cy - 62f * s)
+        close()
+    }, leafMain)
 }
 
 fun DrawScope.drawStairOverlay(cx: Float, cy: Float, stair: StairInfo, material: TileType) {

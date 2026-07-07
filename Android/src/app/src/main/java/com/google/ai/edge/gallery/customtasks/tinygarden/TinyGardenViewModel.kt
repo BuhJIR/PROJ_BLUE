@@ -65,6 +65,10 @@ constructor(
       if (!engine.restoreAttempted) {
           engine.restoreAttempted = true
           GameStatePersistence.load(engine, saveFile)
+          // Пустой мир (свежий старт или всё перебито) — мир «дышит» и заселяется вновь
+          if (engine.currentState().entities.isEmpty()) {
+              engine.populateAmbient()
+          }
       }
       engine.observe { newState ->
           _uiState.update { it.copy(gameState = newState) }

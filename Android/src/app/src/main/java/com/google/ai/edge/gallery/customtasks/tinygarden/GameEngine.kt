@@ -484,6 +484,43 @@ class GameEngine {
             overrides = structureOverrides, seed = seed)
         updateState { fresh }
         logMessage("A new world breathes. Seed: $seed")
+        populateAmbient()
+    }
+
+    /**
+     * Эмбиентное заселение: мир не должен стартовать пустым. Существа
+     * рассаживаются детерминированно от seed — черепа агрессивны, бесы
+     * фуражируют. Имена содержат "skull"/"red" — spritePath подхватит листы.
+     */
+    fun populateAmbient() {
+        val rng = kotlin.random.Random(state.worldSeed)
+        val p = state.player
+        var spawned = 0
+        var attempts = 0
+        while (spawned < 5 && attempts < 80) {
+            attempts++
+            val dx = rng.nextInt(-20, 21)
+            val dy = rng.nextInt(-20, 21)
+            if (abs(dx) < 6 && abs(dy) < 6) continue  // не спавнимся игроку в лицо
+            val x = p.x + dx
+            val y = p.y + dy
+            if (!worldMap.isWalkable(x, y)) continue
+            if (occupiedCells().contains(x to y)) continue
+            val skull = spawned % 2 == 0
+            val e = if (skull) {
+                Entity(name = "Skull Warden", hp = 30, maxHp = 30, x = x, y = y).apply {
+                    addFlag("ENEMY"); addFlag("AGGRESSIVE")
+                }
+            } else {
+                Entity(name = "Red Imp", hp = 14, maxHp = 14, x = x, y = y).apply {
+                    addFlag("FORAGER")
+                    needs.add(Need("HUNGER", 80, setOf("FRUIT", "FOOD")))
+                }
+            }
+            spawnEntity(e)
+            spawned++
+        }
+        if (spawned > 0) logMessage("The world stirs — $spawned creatures roam nearby.")
     }
 
     fun applyStructure(tiles: List<Triple<Int, Int, LayeredTileEx>>) {
