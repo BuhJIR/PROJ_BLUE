@@ -187,6 +187,8 @@ private class DieBody {
                     if (abs(vh) > 55f) {
                         vh = -vh * RESTITUTION; vx *= 0.7f
                         wx *= 0.55f; wy *= 0.55f; wz *= 0.55f
+                        // Удар о землю на скорости подкручивает кубик — живее кувыркается
+                        wz += vx * 0.006f; wx += vx * 0.003f
                     } else {
                         vh = 0f; vx *= 0.6f
                         wx *= 0.85f; wy *= 0.85f; wz *= 0.85f
@@ -292,16 +294,24 @@ private fun project(v: V3, cx: Float, cy: Float, h: Float, scale: Float): Offset
     cy - h + ((v.x + v.z) * 0.5f - v.y) * scale,
 )
 
+// Направление света для затенения граней — сверху-слева-спереди
+private val LIGHT = norm(V3(-0.35f, 1f, 0.45f))
+private fun norm(v: V3): V3 {
+    val l = sqrt(v.x * v.x + v.y * v.y + v.z * v.z)
+    return if (l < 1e-6f) v else V3(v.x / l, v.y / l, v.z / l)
+}
+
 private fun DrawScope.drawDie(body: DieBody, baseScale: Float) {
     val cx = body.px
     val cy = body.groundY
     val scale = body.renderScale(baseScale)
 
+    // Мягкая контактная тень — темнее и уже, когда кубик у земли
     val shadowK = 1f / (1f + body.h / 160f)
     drawOval(
-        Color.Black.copy(alpha = 0.35f * shadowK),
-        topLeft = Offset(cx - scale * 1.5f * shadowK, cy - scale * 0.6f * shadowK),
-        size = Size(scale * 3f * shadowK, scale * 1.2f * shadowK),
+        Color.Black.copy(alpha = 0.4f * shadowK),
+        topLeft = Offset(cx - scale * 1.6f * shadowK, cy - scale * 0.62f * shadowK),
+        size = Size(scale * 3.2f * shadowK, scale * 1.24f * shadowK),
     )
     val worldNormals = FACES.map { apply(body.rot, it.normal) }
     val upIdx = worldNormals.indices.maxByOrNull { worldNormals[it].dot(V3(0f, 1f, 0f)) } ?: 0
@@ -314,12 +324,19 @@ private fun DrawScope.drawDie(body: DieBody, baseScale: Float) {
             moveTo(p[0].x, p[0].y); lineTo(p[1].x, p[1].y)
             lineTo(p[2].x, p[2].y); lineTo(p[3].x, p[3].y); close()
         }
-        val fill = if (i == upIdx) Color(0xFF5A2E8C) else Color(0xFF32184F)
+        // Затенение по нормали: ambient + diffuse — грани обретают объём
+        val nl = n.dot(LIGHT).coerceIn(0f, 1f)
+        val shade = 0.42f + 0.58f * nl
+        val bc = if (i == upIdx) Color(0xFF7A44C0) else Color(0xFF43206A)
+        val fill = Color(bc.red * shade, bc.green * shade, bc.blue * shade, 1f)
         drawPath(path, fill)
-        drawPath(path, Color(0xFF9C7BFF), style = Stroke(2f))
+        // Неоновое ребро, ярче на освещённой грани
+        drawPath(path, Color(0xFF9C7BFF).copy(alpha = 0.5f + 0.5f * nl), style = Stroke(2f))
         PIPS[face.value]?.forEach { (u, v) ->
             val top = lerpO(p[0], p[1], u); val bot = lerpO(p[3], p[2], u)
-            drawCircle(Color(0xFF00E5FF), scale * 0.11f, lerpO(top, bot, v))
+            val c = lerpO(top, bot, v)
+            drawCircle(Color(0xFF003844), scale * 0.13f, Offset(c.x + 0.8f, c.y + 0.8f)) // тень пипса
+            drawCircle(Color(0xFF00E5FF), scale * 0.11f, c)
         }
     }
 }
