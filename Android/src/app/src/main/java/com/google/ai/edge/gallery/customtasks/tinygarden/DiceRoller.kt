@@ -2,6 +2,7 @@ package com.google.ai.edge.gallery.customtasks.tinygarden
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
@@ -134,21 +135,31 @@ private class DieBody {
     /** Взводится один раз при фиксации — вызывающий резолвит и сбрасывает. */
     var pendingResolve = false
 
+    var worldW = 0f
+
     fun placeHome(width: Float, height: Float) {
+        worldW = width
         homeX = width - 66f
-        groundY = height * 0.58f
+        groundY = height * 0.72f          // сильно ниже — ~1/3 высоты от нижнего края
         if (state == DieState.HOVER && px == 0f) px = homeX
     }
 
     fun throwWith(vSwipe: Offset) {
         if (state != DieState.HOVER) return
         val speed = sqrt(vSwipe.x * vSwipe.x + vSwipe.y * vSwipe.y)
-        if (speed < 120f) return                  // случайный тап — не бросок
+        if (speed < 90f) return                   // случайный тап — не бросок
         state = DieState.THROWN
-        vx = (vSwipe.x * 0.35f).coerceIn(-950f, 950f)
-        vh = (320f - vSwipe.y * 0.45f + speed * 0.12f).coerceIn(300f, 1500f)  // вверх
-        val sp = (speed * 0.02f + 7f)
+        // Шире диапазон силы: слабый свайп — короткий бросок, резкий — далёкий
+        vx = (vSwipe.x * 0.55f).coerceIn(-1600f, 1600f)
+        vh = (300f - vSwipe.y * 0.55f + speed * 0.16f).coerceIn(280f, 1800f)  // вверх
+        val sp = (speed * 0.025f + 8f)
         wx = rand(sp); wy = rand(sp); wz = rand(sp)
+    }
+
+    /** Тап по кубику — крутануть его на месте (не бросок). */
+    fun nudgeSpin() {
+        if (state != DieState.HOVER) return
+        wx += rand(10f); wy += rand(10f); wz += rand(10f)
     }
 
     fun step(dt: Float) {
@@ -157,14 +168,19 @@ private class DieBody {
             DieState.HOVER -> {
                 h = hoverH + sin(t * 2.1f) * 4f
                 px += (homeX - px) * (1f - kotlin.math.exp(-6f * dt))   // мягко держим у дома
+                // Угловая скорость плавно оседает к спокойному idle — после тапа
+                // кубик крутанётся и сам успокоится
+                val k = 1f - kotlin.math.exp(-1.6f * dt)
+                wx += (IDLE_WX - wx) * k; wy += (IDLE_WY - wy) * k; wz += (IDLE_WZ - wz) * k
                 spin(dt, 1f)
             }
             DieState.THROWN -> {
                 vh -= G * dt
                 h += vh * dt
                 px += vx * dt
-                // Стены — мягкий отскок, чтобы не улетал за экран
+                // Обе стены — мягкий отскок, чтобы не улетал за экран
                 if (px < 40f) { px = 40f; vx = -vx * 0.5f }
+                if (px > worldW - 40f) { px = worldW - 40f; vx = -vx * 0.5f }
                 spin(dt, 1f)
                 if (h <= 0f) {
                     h = 0f
@@ -254,6 +270,9 @@ private class DieBody {
     private companion object {
         const val G = 2600f
         const val RESTITUTION = 0.5f
+        const val IDLE_WX = 0.5f
+        const val IDLE_WY = 0.8f
+        const val IDLE_WZ = 0.3f
         fun rand(s: Float) = Random.nextFloat() * 2f * s - s
         fun randomRot(): FloatArray {
             var m = rodrigues(1f, 0f, 0f, Random.nextFloat() * 6.28f)
@@ -284,12 +303,6 @@ private fun DrawScope.drawDie(body: DieBody, baseScale: Float) {
         topLeft = Offset(cx - scale * 1.5f * shadowK, cy - scale * 0.6f * shadowK),
         size = Size(scale * 3f * shadowK, scale * 1.2f * shadowK),
     )
-    // Пульсирующее кольцо-подсказка, когда кубик просто висит
-    if (body.state == DieState.HOVER) {
-        val glow = 0.25f + 0.2f * (0.5f + 0.5f * sin(body.t * 3f))
-        drawCircle(Color(0xFF9C7BFF).copy(alpha = glow), scale * 2.1f, Offset(cx, cy - body.h - scale * 0.4f), style = Stroke(2f))
-    }
-
     val worldNormals = FACES.map { apply(body.rot, it.normal) }
     val upIdx = worldNormals.indices.maxByOrNull { worldNormals[it].dot(V3(0f, 1f, 0f)) } ?: 0
 
@@ -352,11 +365,11 @@ fun DiceHud(engine: GameEngine, modifier: Modifier = Modifier) {
             @Suppress("UNUSED_EXPRESSION") tick
             drawDie(body, baseScale = size.minDimension * 0.05f)
         }
-        // Зона свайпа — узкая полоса у правого края, где висит кубик
+        // Зона у правого-нижнего угла, где висит кубик: свайп — бросок, тап — крутить
         Box(
             modifier = Modifier
-                .align(Alignment.CenterEnd)
-                .fillMaxSize(fraction = 0.28f)
+                .align(Alignment.BottomEnd)
+                .fillMaxSize(fraction = 0.32f)
                 .pointerInput(Unit) {
                     val tracker = VelocityTracker()
                     detectDragGestures(
@@ -367,6 +380,9 @@ fun DiceHud(engine: GameEngine, modifier: Modifier = Modifier) {
                             body.throwWith(Offset(v.x, v.y))
                         },
                     )
+                }
+                .pointerInput(Unit) {
+                    detectTapGestures(onTap = { body.nudgeSpin() })
                 },
         )
     }
