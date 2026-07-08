@@ -30,12 +30,14 @@ plugins {
 
 android {
   namespace = "com.google.ai.edge.gallery"
-  compileSdk = 35
+  compileSdk = 36
 
   defaultConfig {
     applicationId = "com.google.aiedge.gallery"
-    minSdk = 31
-    targetSdk = 35
+    // NPU-only сборка — старые телефоны её не запускают, поэтому современный
+    // пол. minSdk 33 = Android 13: разблокирует AGSL RuntimeShader и т.п.
+    minSdk = 33
+    targetSdk = 36
     versionCode = 30
     versionName = "1.0.13"
 
