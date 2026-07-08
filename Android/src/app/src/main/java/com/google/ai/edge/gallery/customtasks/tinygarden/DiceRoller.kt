@@ -1,7 +1,7 @@
 package com.google.ai.edge.gallery.customtasks.tinygarden
 
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
@@ -12,6 +12,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -19,7 +20,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
-import kotlinx.coroutines.delay
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.util.VelocityTracker
+import androidx.compose.ui.unit.dp
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.sin
@@ -27,17 +30,17 @@ import kotlin.math.sqrt
 import kotlin.random.Random
 
 /**
- * Настоящий (лёгкий) 3D-кубик, падающий в плоскость мира (SPEC §15 — «кидаем
- * кубик под ноги»). 8 вершин, 6 граней, гравитация, отскоки с затуханием,
- * кувыркание. Приземляется на грань, снап к ровной позе, читается верхняя
- * грань → DiceCaster резолвит выпавшую Сестру. Никаких обёрток: результат —
- * то, что реально выпало у физики.
+ * Живой 3D-кубик (SPEC §15 — «кидаем кубик под ноги»). Одна сущность: кубик
+ * всегда висит в углу карты и медленно крутится; свайпом по нему бросаем.
+ * Он вылетает ДУГОЙ из точки покоя (не телепорт), падает, отскакивает,
+ * фиксируется на грани — и плавно интерполируется обратно, показывая
+ * результат, пока летит домой. Настоящая физика: 8 вершин, 6 граней,
+ * гравитация, затухающие отскоки, кувыркание.
  */
 
 // ── Мини-математика 3×3 (row-major) ─────────────────────────────────────────
 
 private data class V3(val x: Float, val y: Float, val z: Float) {
-    operator fun plus(o: V3) = V3(x + o.x, y + o.y, z + o.z)
     fun dot(o: V3) = x * o.x + y * o.y + z * o.z
 }
 
@@ -62,7 +65,7 @@ private fun apply(m: FloatArray, v: V3) = V3(
     m[6] * v.x + m[7] * v.y + m[8] * v.z,
 )
 
-/** Родригес: матрица поворота на angle вокруг единичной оси. */
+/** Родригес: матрица поворота на angle вокруг оси. */
 private fun rodrigues(ax: Float, ay: Float, az: Float, angle: Float): FloatArray {
     val len = sqrt(ax * ax + ay * ay + az * az)
     if (len < 1e-6f) return identity()
@@ -82,19 +85,17 @@ private val VERTS = arrayOf(
     V3(-1f, -1f, 1f), V3(1f, -1f, 1f), V3(1f, 1f, 1f), V3(-1f, 1f, 1f),
 )
 
-/** Грань: 4 вершины (по кругу), нормаль, значение (противоположные = 7). */
 private class Face(val idx: IntArray, val normal: V3, val value: Int)
 
 private val FACES = arrayOf(
     Face(intArrayOf(1, 2, 6, 5), V3(1f, 0f, 0f), 1),
     Face(intArrayOf(0, 4, 7, 3), V3(-1f, 0f, 0f), 6),
-    Face(intArrayOf(3, 7, 6, 2), V3(0f, 1f, 0f), 2),   // +Y = верх в покое
+    Face(intArrayOf(3, 7, 6, 2), V3(0f, 1f, 0f), 2),
     Face(intArrayOf(0, 1, 5, 4), V3(0f, -1f, 0f), 5),
     Face(intArrayOf(4, 5, 6, 7), V3(0f, 0f, 1f), 3),
     Face(intArrayOf(0, 3, 2, 1), V3(0f, 0f, -1f), 4),
 )
 
-// Пипсы в единичном квадрате грани [0..1]²
 private val PIPS = mapOf(
     1 to listOf(.5f to .5f),
     2 to listOf(.28f to .28f, .72f to .72f),
@@ -104,78 +105,120 @@ private val PIPS = mapOf(
     6 to listOf(.28f to .22f, .28f to .5f, .28f to .78f, .72f to .22f, .72f to .5f, .72f to .78f),
 )
 
-// Камера-изометрия: грань видна если нормаль смотрит на камеру
 private val TO_CAM = V3(0.577f, 0.577f, 0.577f)
 private const val COS30 = 0.866f
 
 // ── Тело кубика ─────────────────────────────────────────────────────────────
 
-private class DieBody(dropX: Float, groundY: Float) {
-    // Экранная позиция «пятна» на земле + высота над ним (px)
-    var px = dropX
-    var gy = groundY
-    var h = 300f
-    var vh = -40f                       // вертикальная скорость (вверх +)
-    var vx = Random.nextFloat() * 200f - 100f
+private enum class DieState { HOVER, THROWN, RESULT, RETURN }
+
+private class DieBody {
+    var homeX = 0f
+    var groundY = 0f
+    var hoverH = 46f
+
+    var px = 0f
+    var h = 46f
+    var vx = 0f
+    var vh = 0f
     var rot = randomRot()
-    // Угловая скорость (рад/с) вокруг трёх осей
-    var wx = Random.nextFloat() * 18f - 9f
-    var wy = Random.nextFloat() * 18f - 9f
-    var wz = Random.nextFloat() * 18f - 9f
-    var restStable = 0f
-    var settled = false
+    var wx = 0.5f; var wy = 0.8f; var wz = 0.3f
+    var t = 0f
+    var timer = 0f
+    var landPx = 0f
+
+    var state = DieState.HOVER
         private set
     var value = 0
         private set
+    /** Взводится один раз при фиксации — вызывающий резолвит и сбрасывает. */
+    var pendingResolve = false
 
-    private companion object {
-        const val G = 2600f
-        const val RESTITUTION = 0.5f
-        fun randomRot(): FloatArray {
-            var m = rodrigues(1f, 0f, 0f, Random.nextFloat() * 6.28f)
-            m = mul(rodrigues(0f, 1f, 0f, Random.nextFloat() * 6.28f), m)
-            return mul(rodrigues(0f, 0f, 1f, Random.nextFloat() * 6.28f), m)
-        }
+    fun placeHome(width: Float, height: Float) {
+        homeX = width - 66f
+        groundY = height * 0.58f
+        if (state == DieState.HOVER && px == 0f) px = homeX
+    }
+
+    fun throwWith(vSwipe: Offset) {
+        if (state != DieState.HOVER) return
+        val speed = sqrt(vSwipe.x * vSwipe.x + vSwipe.y * vSwipe.y)
+        if (speed < 120f) return                  // случайный тап — не бросок
+        state = DieState.THROWN
+        vx = (vSwipe.x * 0.35f).coerceIn(-950f, 950f)
+        vh = (320f - vSwipe.y * 0.45f + speed * 0.12f).coerceIn(300f, 1500f)  // вверх
+        val sp = (speed * 0.02f + 7f)
+        wx = rand(sp); wy = rand(sp); wz = rand(sp)
     }
 
     fun step(dt: Float) {
-        if (settled) return
-        // Вертикаль: гравитация + отскок от плоскости (h = 0)
-        vh -= G * dt
-        h += vh * dt
-        px += vx * dt
-        if (h <= 0f) {
-            h = 0f
-            if (abs(vh) > 55f) {
-                vh = -vh * RESTITUTION
-                vx *= 0.7f
-                wx *= 0.55f; wy *= 0.55f; wz *= 0.55f   // отскок гасит вращение
-            } else {
-                vh = 0f
-                vx *= 0.6f
-                wx *= 0.85f; wy *= 0.85f; wz *= 0.85f
+        t += dt
+        when (state) {
+            DieState.HOVER -> {
+                h = hoverH + sin(t * 2.1f) * 4f
+                px += (homeX - px) * (1f - kotlin.math.exp(-6f * dt))   // мягко держим у дома
+                spin(dt, 1f)
+            }
+            DieState.THROWN -> {
+                vh -= G * dt
+                h += vh * dt
+                px += vx * dt
+                // Стены — мягкий отскок, чтобы не улетал за экран
+                if (px < 40f) { px = 40f; vx = -vx * 0.5f }
+                spin(dt, 1f)
+                if (h <= 0f) {
+                    h = 0f
+                    if (abs(vh) > 55f) {
+                        vh = -vh * RESTITUTION; vx *= 0.7f
+                        wx *= 0.55f; wy *= 0.55f; wz *= 0.55f
+                    } else {
+                        vh = 0f; vx *= 0.6f
+                        wx *= 0.85f; wy *= 0.85f; wz *= 0.85f
+                    }
+                }
+                val spinMag = sqrt(wx * wx + wy * wy + wz * wz)
+                if (h == 0f && abs(vh) < 10f && spinMag < 0.6f) {
+                    timer += dt
+                    if (timer > 0.25f) settle()
+                } else timer = 0f
+            }
+            DieState.RESULT -> {
+                timer += dt
+                if (timer > 0.7f) { state = DieState.RETURN; timer = 0f; landPx = px }
+            }
+            DieState.RETURN -> {
+                // Плавно летим домой, НЕ вращаясь — грань-результат видно всю дорогу
+                timer += dt
+                val p = smooth((timer / 0.55f).coerceIn(0f, 1f))
+                px = lerp(landPx, homeX, p)
+                h = lerp(0f, hoverH, p)
+                if (p >= 1f) state = DieState.HOVER
             }
         }
-        // Кувыркание
-        val spin = sqrt(wx * wx + wy * wy + wz * wz)
-        if (spin > 1e-4f) rot = mul(rodrigues(wx, wy, wz, spin * dt), rot)
+    }
 
-        // Условие покоя: на земле, почти без прыжка и вращения
-        if (h == 0f && abs(vh) < 10f && spin < 0.6f) {
-            restStable += dt
-            if (restStable > 0.25f) settle()
-        } else {
-            restStable = 0f
-        }
+    private fun spin(dt: Float, k: Float) {
+        val s = sqrt(wx * wx + wy * wy + wz * wz)
+        if (s > 1e-4f) rot = mul(rodrigues(wx, wy, wz, s * dt * k), rot)
     }
 
     private fun settle() {
         rot = snap(rot)
         value = upValue(rot)
-        settled = true
+        state = DieState.RESULT
+        timer = 0f
+        pendingResolve = true
     }
 
-    /** Значение грани, чья повёрнутая нормаль ближе всего к мировому «вверх». */
+    // Масштаб «пульсирует» по состоянию — брошенный крупнее висящего
+    fun renderScale(base: Float): Float = base * when (state) {
+        DieState.HOVER -> 0.82f
+        DieState.THROWN, DieState.RESULT -> 1.15f
+        DieState.RETURN -> lerp(1.15f, 0.82f, smooth((timer / 0.55f).coerceIn(0f, 1f)))
+    }
+
+    fun showingResult() = state == DieState.RESULT || state == DieState.RETURN
+
     private fun upValue(m: FloatArray): Int {
         var best = FACES[0]; var bestDot = -2f
         for (f in FACES) {
@@ -185,11 +228,10 @@ private class DieBody(dropX: Float, groundY: Float) {
         return best.value
     }
 
-    /** Снап матрицы к ближайшей осе-выровненной позе — кубик лежит ровно. */
     private fun snap(m: FloatArray): FloatArray {
         val cx = axisSnap(V3(m[0], m[3], m[6]))
         var cy = axisSnap(V3(m[1], m[4], m[7]))
-        if (sameAxis(cx, cy)) cy = fallbackAxis(cx)
+        if (sameAxis(cx, cy)) cy = if (cx.x == 0f) V3(1f, 0f, 0f) else V3(0f, 1f, 0f)
         val cz = cross(cx, cy)
         return mat(cx.x, cy.x, cz.x, cx.y, cy.y, cz.y, cx.z, cy.z, cz.z)
     }
@@ -206,15 +248,23 @@ private class DieBody(dropX: Float, groundY: Float) {
     private fun sameAxis(a: V3, b: V3) =
         (a.x != 0f && b.x != 0f) || (a.y != 0f && b.y != 0f) || (a.z != 0f && b.z != 0f)
 
-    private fun fallbackAxis(a: V3): V3 =
-        if (a.x == 0f) V3(1f, 0f, 0f) else V3(0f, 1f, 0f)
+    private fun cross(a: V3, b: V3) =
+        V3(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x)
 
-    private fun cross(a: V3, b: V3) = V3(
-        a.y * b.z - a.z * b.y,
-        a.z * b.x - a.x * b.z,
-        a.x * b.y - a.y * b.x,
-    )
+    private companion object {
+        const val G = 2600f
+        const val RESTITUTION = 0.5f
+        fun rand(s: Float) = Random.nextFloat() * 2f * s - s
+        fun randomRot(): FloatArray {
+            var m = rodrigues(1f, 0f, 0f, Random.nextFloat() * 6.28f)
+            m = mul(rodrigues(0f, 1f, 0f, Random.nextFloat() * 6.28f), m)
+            return mul(rodrigues(0f, 0f, 1f, Random.nextFloat() * 6.28f), m)
+        }
+    }
 }
+
+private fun lerp(a: Float, b: Float, t: Float) = a + (b - a) * t
+private fun smooth(t: Float) = t * t * (3f - 2f * t)
 
 // ── Проекция и отрисовка ────────────────────────────────────────────────────
 
@@ -223,95 +273,101 @@ private fun project(v: V3, cx: Float, cy: Float, h: Float, scale: Float): Offset
     cy - h + ((v.x + v.z) * 0.5f - v.y) * scale,
 )
 
-private fun DrawScope.drawDie(body: DieBody, scale: Float) {
+private fun DrawScope.drawDie(body: DieBody, baseScale: Float) {
     val cx = body.px
-    val cy = body.gy
-    // Тень: меньше и бледнее, когда кубик высоко
+    val cy = body.groundY
+    val scale = body.renderScale(baseScale)
+
     val shadowK = 1f / (1f + body.h / 160f)
     drawOval(
         Color.Black.copy(alpha = 0.35f * shadowK),
         topLeft = Offset(cx - scale * 1.5f * shadowK, cy - scale * 0.6f * shadowK),
         size = Size(scale * 3f * shadowK, scale * 1.2f * shadowK),
     )
+    // Пульсирующее кольцо-подсказка, когда кубик просто висит
+    if (body.state == DieState.HOVER) {
+        val glow = 0.25f + 0.2f * (0.5f + 0.5f * sin(body.t * 3f))
+        drawCircle(Color(0xFF9C7BFF).copy(alpha = glow), scale * 2.1f, Offset(cx, cy - body.h - scale * 0.4f), style = Stroke(2f))
+    }
 
     val worldNormals = FACES.map { apply(body.rot, it.normal) }
     val upIdx = worldNormals.indices.maxByOrNull { worldNormals[it].dot(V3(0f, 1f, 0f)) } ?: 0
 
     FACES.forEachIndexed { i, face ->
         val n = worldNormals[i]
-        if (n.dot(TO_CAM) <= 0.02f) return@forEachIndexed   // грань от нас — пропускаем
-
+        if (n.dot(TO_CAM) <= 0.02f) return@forEachIndexed
         val p = face.idx.map { project(apply(body.rot, VERTS[it]), cx, cy, body.h, scale) }
         val path = Path().apply {
-            moveTo(p[0].x, p[0].y)
-            lineTo(p[1].x, p[1].y)
-            lineTo(p[2].x, p[2].y)
-            lineTo(p[3].x, p[3].y)
-            close()
+            moveTo(p[0].x, p[0].y); lineTo(p[1].x, p[1].y)
+            lineTo(p[2].x, p[2].y); lineTo(p[3].x, p[3].y); close()
         }
-        // Верхняя грань ярче — кибер-готический неон
         val fill = if (i == upIdx) Color(0xFF5A2E8C) else Color(0xFF32184F)
         drawPath(path, fill)
         drawPath(path, Color(0xFF9C7BFF), style = Stroke(2f))
-
-        // Пипсы: билинейно по 4 углам грани
         PIPS[face.value]?.forEach { (u, v) ->
-            val top = lerp(p[0], p[1], u)
-            val bot = lerp(p[3], p[2], u)
-            val c = lerp(top, bot, v)
-            drawCircle(Color(0xFF00E5FF), scale * 0.11f, c)
+            val top = lerpO(p[0], p[1], u); val bot = lerpO(p[3], p[2], u)
+            drawCircle(Color(0xFF00E5FF), scale * 0.11f, lerpO(top, bot, v))
         }
     }
 }
 
-private fun lerp(a: Offset, b: Offset, t: Float) = Offset(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t)
+private fun lerpO(a: Offset, b: Offset, t: Float) = Offset(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t)
 
-// ── Compose-оверлей ─────────────────────────────────────────────────────────
+// ── Compose-HUD: одна живая сущность ────────────────────────────────────────
 
 /**
- * Оверлей броска: роняет кубик в центр вида, крутит физику по кадрам, на
- * приземлении резолвит грань через DiceCaster и вызывает onSettled.
+ * Живой кубик на карте. Рисуется поверх всего вида (чтобы бросок мог лететь
+ * дугой через карту), а свайп ловится только в правой зоне у точки покоя —
+ * остальная карта свободно панорамируется.
  */
 @Composable
-fun DiceRollOverlay(
-    engine: GameEngine,
-    modifier: Modifier = Modifier,
-    onSettled: () -> Unit,
-) {
+fun DiceHud(engine: GameEngine, modifier: Modifier = Modifier) {
+    val body = remember { DieBody() }
     var tick by remember { mutableIntStateOf(0) }
-    val body = remember { mutableStateOf<DieBody?>(null) }
     var sizePx by remember { mutableStateOf(Size.Zero) }
+    val die = remember { Sisters.defaultDie() }
 
-    LaunchedEffect(sizePx) {
-        if (sizePx == Size.Zero) return@LaunchedEffect
-        val b = DieBody(dropX = sizePx.width * 0.5f, groundY = sizePx.height * 0.55f)
-        body.value = b
+    LaunchedEffect(Unit) {
         var last = 0L
-        var done = false
-        while (!done) {
+        while (true) {
             withFrameNanos { now ->
                 if (last != 0L) {
                     val dt = ((now - last) / 1e9f).coerceAtMost(0.033f)
-                    b.step(dt)
+                    body.step(dt)
+                    if (body.pendingResolve) {
+                        body.pendingResolve = false
+                        val p = engine.currentState().player
+                        DiceCaster.applyRoll(die, body.value, p.col, p.row, engine)
+                    }
                     tick++
                 }
                 last = now
             }
-            if (b.settled) done = true
         }
-        // Читаем выпавшее и резолвим — без повторного броска
-        val p = engine.currentState().player
-        val die = Sisters.defaultDie()
-        DiceCaster.applyRoll(die, b.value, p.col, p.row, engine)
-        delay(650)   // дать игроку увидеть результат
-        onSettled()
     }
 
-    Box(modifier = modifier.background(Color(0x66000010))) {
+    Box(modifier = modifier) {
         Canvas(modifier = Modifier.fillMaxSize()) {
-            sizePx = size
-            @Suppress("UNUSED_EXPRESSION") tick // подписка на кадр — форсит перерисовку
-            body.value?.let { drawDie(it, scale = size.minDimension * 0.055f) }
+            body.placeHome(size.width, size.height)
+            @Suppress("UNUSED_EXPRESSION") tick
+            drawDie(body, baseScale = size.minDimension * 0.05f)
         }
+        // Зона свайпа — узкая полоса у правого края, где висит кубик
+        Box(
+            modifier = Modifier
+                .align(Alignment.CenterEnd)
+                .fillMaxSize(fraction = 0.28f)
+                .pointerInput(Unit) {
+                    val tracker = VelocityTracker()
+                    detectDragGestures(
+                        onDragStart = { tracker.resetTracking() },
+                        onDrag = { change, _ -> tracker.addPosition(change.uptimeMillis, change.position) },
+                        onDragEnd = {
+                            val v = tracker.calculateVelocity()
+                            body.throwWith(Offset(v.x, v.y))
+                        },
+                    )
+                },
+        )
     }
 }

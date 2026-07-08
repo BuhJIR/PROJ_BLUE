@@ -140,6 +140,9 @@ fun Ps1TitleScreen(
       )
 
   Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
+    // ── Пиксельный огонь фоном (чистая математика, без картинок) ────────────
+    PixelFire(modifier = Modifier.fillMaxSize())
+
     Column(
       modifier = Modifier.fillMaxSize(),
       horizontalAlignment = Alignment.CenterHorizontally,
@@ -347,3 +350,93 @@ private fun queryFileName(context: Context, uri: Uri): String? =
     val idx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
     if (idx >= 0 && cursor.moveToFirst()) cursor.getString(idx) else null
   }
+
+/**
+ * Пиксельный огонь на фоне — классический demoscene fire, чистая математика,
+ * без изображений и векторов. Низкое разрешение буфера: нижний ряд «горит»,
+ * каждый пиксель выше = соседи снизу минус случайное затухание. Цвет через
+ * HSV с оттенком, дрейфующим по времени — пламя медленно перекрашивается.
+ */
+@Composable
+private fun PixelFire(modifier: Modifier = Modifier) {
+  val cols = 60
+  val rows = 80
+  val heat = remember { IntArray(cols * rows) }
+  var tick by remember { androidx.compose.runtime.mutableIntStateOf(0) }
+  var hue by remember { androidx.compose.runtime.mutableFloatStateOf(0f) }
+  val maxHeat = 36
+
+  androidx.compose.runtime.LaunchedEffect(Unit) {
+    val rnd = kotlin.random.Random(1)
+    var last = 0L
+    var acc = 0f
+    while (true) {
+      androidx.compose.runtime.withFrameNanos { now ->
+        if (last != 0L) {
+          acc += (now - last) / 1e9f
+          // Симуляция ~30 Гц — не на каждый vsync
+          if (acc >= 1f / 30f) {
+            acc = 0f
+            // Нижний ряд — источник жара, слегка мерцает
+            for (x in 0 until cols) {
+              heat[(rows - 1) * cols + x] = if (rnd.nextInt(10) < 8) maxHeat else maxHeat - rnd.nextInt(8)
+            }
+            // Распространение вверх с боковым сносом и затуханием
+            for (y in 0 until rows - 1) {
+              for (x in 0 until cols) {
+                val below = heat[(y + 1) * cols + x]
+                val drift = rnd.nextInt(3) - 1
+                val sx = (x + drift).coerceIn(0, cols - 1)
+                val decay = rnd.nextInt(2)
+                heat[y * cols + sx] = (below - decay).coerceAtLeast(0)
+              }
+            }
+            hue = (hue + 0.35f) % 360f    // медленный дрейф цвета пламени
+            tick++
+          }
+        }
+        last = now
+      }
+    }
+  }
+
+  Canvas(modifier = modifier) {
+    @Suppress("UNUSED_EXPRESSION") tick
+    val cw = size.width / cols
+    val ch = size.height / rows
+    for (y in 0 until rows) {
+      for (x in 0 until cols) {
+        val h = heat[y * cols + x]
+        if (h <= 0) continue
+        val norm = h.toFloat() / maxHeat
+        // Оттенок: база дрейфует по времени, добавка от жара → раскалённое ядро белее
+        val hh = (hue + norm * 45f) % 360f
+        val sat = (1f - norm * 0.7f).coerceIn(0f, 1f)
+        val value = (norm * 1.3f).coerceIn(0f, 1f)
+        val alpha = (norm * norm).coerceIn(0f, 1f)   // низ прозрачнее к чёрному фону
+        drawRect(
+          color = hsv(hh, sat, value).copy(alpha = alpha),
+          topLeft = Offset(x * cw, y * ch),
+          size = Size(cw + 1f, ch + 1f),
+        )
+      }
+    }
+  }
+}
+
+/** HSV → Color чистой математикой (без android.graphics). */
+private fun hsv(h: Float, s: Float, v: Float): Color {
+  val c = v * s
+  val hp = (h % 360f) / 60f
+  val x = c * (1f - kotlin.math.abs(hp % 2f - 1f))
+  val (r1, g1, b1) = when (hp.toInt()) {
+    0 -> Triple(c, x, 0f)
+    1 -> Triple(x, c, 0f)
+    2 -> Triple(0f, c, x)
+    3 -> Triple(0f, x, c)
+    4 -> Triple(x, 0f, c)
+    else -> Triple(c, 0f, x)
+  }
+  val m = v - c
+  return Color(r1 + m, g1 + m, b1 + m)
+}
