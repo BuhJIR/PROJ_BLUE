@@ -320,6 +320,15 @@ fun IsoMapRenderer(
         val wStartC = liveMap.centerCol - halfC
         val wStartR = liveMap.centerRow - halfR
 
+        // Глубина в изометрии = диагональ (col+row): больше → ближе к камере.
+        // Рисуем всё одним проходом сзади→вперёд; сущности вставляем на их
+        // клетке — тогда преграды на более близких клетках закрывают их сами.
+        val entsByCell = HashMap<Pair<Int, Int>, MutableList<Entity>>()
+        for (e in gameState.entities.values) entsByCell.getOrPut(e.col to e.row) { mutableListOf() }.add(e)
+        entsByCell.getOrPut(player.col to player.row) { mutableListOf() }.add(player)
+        val occluders = ArrayList<OccBox>()
+        val entRenders = ArrayList<EntRender>()
+
         for (lr in 0 until liveMap.rows) {
             for (lc in 0 until liveMap.cols) {
                 val wc = lc + wStartC
@@ -335,13 +344,23 @@ fun IsoMapRenderer(
                 if (sx < -TILE_W || sx > size.width + TILE_W) continue
                 if (sy < -TILE_H * 6 || sy > size.height + TILE_H * 6) continue
 
+                val depth = wc + wr
                 // Дикий WOOD — дерево на траве; WOOD в постройке — материал
                 val wildTile = liveMap.structureAt(wc, wr) == null
                 if (lt.base == TileType.WOOD && wildTile) {
                     drawIsoTile(sx, sy, TileType.GRASS, lt.height)
+                    var ts = 0.85f + (seedFor(wc, wr) and 0x7) * 0.06f
+                    if ((seedFor(wc, wr) and 0x1C0) == 0) ts *= 1.6f
                     drawTree(sx, sy, seedFor(wc, wr))
+                    // Крона дерева — преграда: копим её экранный бокс
+                    occluders.add(OccBox(depth, sx - 34f * ts, sy - 100f * ts, sx + 34f * ts, sy - 18f * ts))
                 } else {
                     drawIsoTile(sx, sy, lt.base, lt.height)
+                    // Поднятый тайл (стена/холм/постройка) — тоже преграда
+                    if (lt.height > 0) {
+                        val sideH = 8f + lt.height * TILE_LIFT
+                        occluders.add(OccBox(depth, sx - TILE_W2, sy - TILE_H2, sx + TILE_W2, sy + TILE_H2 + sideH))
+                    }
                 }
                 // Растительность на диких клетках — кроме камня и воды
                 if (wildTile && (lt.base == TileType.GRASS || lt.base == TileType.DIRT)) {
@@ -367,52 +386,84 @@ fun IsoMapRenderer(
                     drawPath(p, Color(0x6600FFAA))
                     drawPath(p, Color.White, style = Stroke(2f))
                 }
+
+                // Сущности на этой клетке — рисуются здесь, между тайлами по глубине
+                entsByCell[wc to wr]?.forEach { entity ->
+                    val isPlayer = entity.id == gameState.player.id
+                    val dirStr = entity.memoryString("direction") ?: "SOUTH"
+                    val dir    = runCatching { Direction.valueOf(dirStr) }.getOrDefault(Direction.SOUTH)
+                    val base   = spriteBase(if (isPlayer) "sister_3" else entity.name)
+                    val key    = "${base}_${dir.name.lowercase()}.png"
+                    val sheet  = SpriteSheetCache.sheet(context, key, base)
+                    if (sheet != null) {
+                        val frameH  = sheet.bitmap.height
+                        val targetH = if (isPlayer) 150f else 120f
+                        val scale   = targetH / frameH
+                        val fi      = sheet.frameAt(spriteClock)
+                        val screenX = sx - sheet.nominalW * scale / 2f
+                        val screenY = sy - frameH * scale
+                        drawSpriteFrame(sheet, fi, screenX, screenY, scale)
+                        entRenders.add(EntRender(
+                            depth, sheet, fi, scale, screenX, screenY,
+                            screenX, screenY, screenX + sheet.nominalW * scale, sy,
+                            sx, sy, entity.hp, entity.maxHp,
+                        ))
+                    } else {
+                        val color = when {
+                            isPlayer                -> Color(0xFF44AAFF)
+                            entity.hasFlag("ENEMY") -> Color(0xFFCC2222)
+                            else                    -> Color(0xFF888888)
+                        }
+                        drawOval(Color(0x33000000), Offset(sx-18f, sy-6f), Size(36f, 12f))
+                        drawRect(color, Offset(sx-12f, sy-48f), Size(24f, 36f))
+                        drawCircle(color, 10f, Offset(sx, sy-56f))
+                        entRenders.add(EntRender(
+                            depth, null, 0, 1f, sx, sy,
+                            sx - 18f, sy - 58f, sx + 18f, sy,
+                            sx, sy, entity.hp, entity.maxHp,
+                        ))
+                    }
+                }
             }
         }
 
-        // ── Entity ─────────────────────────────────────────────────────────────
-        val allEntities = (gameState.entities.values + gameState.player).sortedBy { it.col + it.row }
-
-        for (entity in allEntities) {
-            val lt    = liveMap.tileAt(entity.col, entity.row)
-            val iso   = isoToScreen(entity.col.toFloat(), entity.row.toFloat(), lt.height.toFloat())
-            val sx    = cx + iso.x
-            val sy    = cy + iso.y
-            val isPlayer = entity.id == gameState.player.id
-
-            val dirStr = entity.memoryString("direction") ?: "SOUTH"
-            val dir    = runCatching { Direction.valueOf(dirStr) }.getOrDefault(Direction.SOUTH)
-            val base   = spriteBase(if (isPlayer) "sister_3" else entity.name)
-            val key    = "${base}_${dir.name.lowercase()}.png"
-            val sheet  = SpriteSheetCache.sheet(context, key, base)
-
-            if (sheet != null) {
-                val frameH  = sheet.bitmap.height
-                // Масштаб от целевой высоты: враги (120px) остаются 1:1,
-                // Сёстры (309–332px) ужимаются одинаково для игрока и NPC
-                val targetH = if (isPlayer) 150f else 120f
-                val scale   = targetH / frameH
-                val fi      = sheet.frameAt(spriteClock)
-                // Позиция центрируется по номинальной ширине кадра —
-                // не плавает при смене кадров неравной ширины
-                val screenX = sx - sheet.nominalW * scale / 2f
-                val screenY = sy - frameH * scale
-                drawSpriteFrame(sheet, fi, screenX, screenY, scale)
-            } else {
-                val color = when {
-                    isPlayer               -> Color(0xFF44AAFF)
-                    entity.hasFlag("ENEMY")-> Color(0xFFCC2222)
-                    else                   -> Color(0xFF888888)
-                }
-                drawOval(Color(0x33000000), Offset(sx-18f, sy-6f), Size(36f, 12f))
-                drawRect(color, Offset(sx-12f, sy-48f), Size(24f, 36f))
-                drawCircle(color, 10f, Offset(sx, sy-56f))
+        // ── Рентген-силуэт: часть сущности за преградой — неоновый контур ───────
+        // Обрезаем силуэт clipPath'ом по боксам преград, что ближе по глубине —
+        // светится ровно то, что спрятано за стеной/деревом (без шейдеров).
+        for (er in entRenders) {
+            val sheet = er.sheet ?: continue
+            val hides = occluders.filter { o ->
+                o.sum > er.sum && o.l < er.r && o.r > er.l && o.t < er.b && o.b > er.t
             }
+            if (hides.isEmpty()) continue
+            val clip = Path().apply {
+                hides.forEach { addRect(androidx.compose.ui.geometry.Rect(it.l, it.t, it.r, it.b)) }
+            }
+            clipPath(clip) {
+                drawSpriteFrame(sheet, er.fi, er.screenX, er.screenY, er.scale,
+                    tint = Color(0xFF00E5FF), alpha = 0.85f)
+            }
+        }
 
-            if (entity.maxHp > 0) drawSegmentedHpBar(sx, sy - 64f, entity.hp, entity.maxHp)
+        // ── HP-бары — верхним проходом, чтобы всегда читались ───────────────────
+        for (er in entRenders) {
+            if (er.maxHp > 0) drawSegmentedHpBar(er.footX, er.footY - 64f, er.hp, er.maxHp)
         }
     }
 }
+
+/** Экранный бокс преграды на диагонали sum (для теста перекрытия сущностей). */
+private class OccBox(val sum: Int, val l: Float, val t: Float, val r: Float, val b: Float)
+
+/** Данные отрисованной сущности для оверлеев (силуэт, HP). */
+private class EntRender(
+    val sum: Int,
+    val sheet: SpriteSheet?, val fi: Int, val scale: Float,
+    val screenX: Float, val screenY: Float,
+    val l: Float, val t: Float, val r: Float, val b: Float,   // экранный бокс спрайта
+    val footX: Float, val footY: Float,
+    val hp: Int, val maxHp: Int,
+)
 
 // ── drawSpriteFrame — кадр по точным границам из SpriteSheet ──────────────────
 fun DrawScope.drawSpriteFrame(
@@ -420,6 +471,8 @@ fun DrawScope.drawSpriteFrame(
     frameIndex: Int,
     screenX: Float, screenY: Float,
     scale: Float = 1f,
+    tint: Color? = null,   // залить силуэтом (SrcIn) — для рентген-контура за преградой
+    alpha: Float = 1f,
 ) {
     val srcLeft = sheet.srcLeft(frameIndex)
     val srcW = sheet.srcWidth(frameIndex)
@@ -436,6 +489,8 @@ fun DrawScope.drawSpriteFrame(
             dstOffset     = IntOffset.Zero,
             dstSize       = IntSize(srcW, srcH),
             filterQuality = FilterQuality.None,
+            alpha         = alpha,
+            colorFilter   = tint?.let { androidx.compose.ui.graphics.ColorFilter.tint(it, androidx.compose.ui.graphics.BlendMode.SrcIn) },
         )
     }
 }
