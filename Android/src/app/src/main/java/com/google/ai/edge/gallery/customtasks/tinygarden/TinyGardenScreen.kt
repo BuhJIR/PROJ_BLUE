@@ -183,6 +183,7 @@ fun MainUi(
               model.getIntConfigValue(ConfigKeys.RESET_CONVERSATION_TURN_COUNT, 3).coerceAtLeast(2)
             )
           }
+          var diceRolling by remember { mutableStateOf(false) }
           Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
             GameRenderer(
               gameState = uiState.gameState,
@@ -204,6 +205,19 @@ fun MainUi(
                 }
               },
             )
+            // Кнопка броска кубика — «кидаем кубик под ноги» (SPEC §15)
+            DiceCastButton(
+              enabled = !diceRolling,
+              modifier = Modifier.align(Alignment.BottomEnd).padding(12.dp),
+              onClick = { diceRolling = true },
+            )
+            if (diceRolling) {
+              DiceRollOverlay(
+                engine = viewModel.engine,
+                modifier = Modifier.fillMaxSize(),
+                onSettled = { diceRolling = false },
+              )
+            }
           }
           Spacer(modifier = Modifier.height(8.dp))
 
@@ -405,5 +419,24 @@ private fun SoulMemoryHud(
         )
       }
     }
+  }
+}
+
+/** Круглая кнопка «🎲» в углу карты — бросает кубик под ноги героя. */
+@Composable
+private fun DiceCastButton(
+  enabled: Boolean,
+  onClick: () -> Unit,
+  modifier: Modifier = Modifier,
+) {
+  Box(
+    modifier = modifier
+      .size(52.dp)
+      .background(Color(0xCC2A0F3D), androidx.compose.foundation.shape.CircleShape)
+      .border(2.dp, if (enabled) Color(0xFF9C7BFF) else Color(0xFF444455), androidx.compose.foundation.shape.CircleShape)
+      .clickable(enabled = enabled, onClick = onClick),
+    contentAlignment = Alignment.Center,
+  ) {
+    Text("🎲", fontSize = 26.sp)
   }
 }

@@ -57,8 +57,15 @@ data class Dice(
  * Разные грани — разные эффекты в точке падения.
  */
 object DiceCaster {
-    fun castOnTile(die: Dice, targetCol: Int, targetRow: Int, engine: GameEngine): DieFace {
-        val roll = die.roll()
+    fun castOnTile(die: Dice, targetCol: Int, targetRow: Int, engine: GameEngine): DieFace =
+        applyRoll(die, die.roll(), targetCol, targetRow, engine)
+
+    /**
+     * Резолв уже известного значения броска. Физический кубик (DiceRoller)
+     * бросается настоящей симуляцией и сообщает выпавшую грань сюда — не
+     * бросаем второй раз, иначе картинка и эффект разойдутся.
+     */
+    fun applyRoll(die: Dice, roll: Int, targetCol: Int, targetRow: Int, engine: GameEngine): DieFace {
         val face = die.resolve(roll)
         when (face) {
             is DieFace.Occupant -> {
