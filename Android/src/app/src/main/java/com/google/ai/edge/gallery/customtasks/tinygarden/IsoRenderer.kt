@@ -457,60 +457,37 @@ private fun seedFor(col: Int, row: Int): Int {
 }
 
 /**
- * Дерево: ствол + многоярусная крона в духе PS1. Высота, число ярусов и форма
- * (раскидистое / стройная ель / шар) варьируются детерминированно от клетки,
- * так что лес перестал быть рядом клонов. Каждое ~восьмое — неоновое.
+ * Дерево: ствол + двухъярусная ромбовидная крона в духе PS1 (исходная форма).
+ * Размер варьируется, плюс редкий крупный вариант — великан над лесом.
+ * Каждое ~восьмое дерево — неоново-фиолетовое: кибер-готика.
  */
 fun DrawScope.drawTree(cx: Float, cy: Float, seed: Int) {
-    // Широкий разброс размера: 0.7..1.75 — от кустистого молодняка до великанов
-    val s = 0.7f + (seed and 0xF) * 0.07f
-    val form = (seed ushr 4) and 0x3          // 0-1 раскидистое, 2 ель, 3 шар
-    val violet = (seed and 0x1C0) == 0        // редкий фиолетовый экземпляр
+    var s = 0.85f + (seed and 0x7) * 0.06f            // 0.85..1.27 — обычный разброс
+    if ((seed and 0x1C0) == 0) s *= 1.6f              // редкий крупный экземпляр
+    val violet = (seed and 0x38) == 0                  // редкий фиолетовый экземпляр
     val trunk = Color(0xFF2E2430)
-    val leafDark = if (violet) Color(0xFF3A1E5C) else Color(0xFF123E32)
+    val leafDark = if (violet) Color(0xFF3A1E5C) else Color(0xFF14453A)
     val leafMain = if (violet) Color(0xFF6A34A8)
-                   else if (seed and 0x200 == 0) Color(0xFF1D5C4A) else Color(0xFF2A7458)
+                   else if (seed and 0x10 == 0) Color(0xFF1D5C4A) else Color(0xFF256852)
 
-    val trunkH = (26f + (seed and 0x7) * 3f) * s   // высота ствола тоже пляшет
-    drawRect(trunk, Offset(cx - 4f * s, cy - trunkH), Size(8f * s, trunkH))
-
-    when (form) {
-        3 -> { // Шар-крона
-            drawCircle(leafDark, 26f * s, Offset(cx, cy - trunkH - 16f * s))
-            drawCircle(leafMain, 18f * s, Offset(cx - 5f * s, cy - trunkH - 22f * s))
-        }
-        2 -> { // Стройная ель: 3-4 узких яруса, уходит высоко
-            val tiers = 3 + (seed and 0x1)
-            val base = cy - trunkH
-            for (t in 0 until tiers) {
-                val ty = base - t * 20f * s
-                val w = (26f - t * 5f) * s
-                val col = if (t == tiers - 1) leafMain else leafDark
-                drawPath(Path().apply {
-                    moveTo(cx, ty - 34f * s)
-                    lineTo(cx + w, ty)
-                    lineTo(cx - w, ty)
-                    close()
-                }, col)
-            }
-        }
-        else -> { // Раскидистое: 2-3 ромбовидных яруса
-            val tiers = 2 + (seed and 0x1)
-            val base = cy - trunkH + 8f * s
-            for (t in 0 until tiers) {
-                val ty = base - t * 26f * s
-                val w = (32f - t * 9f) * s
-                val hh = (30f - t * 6f) * s
-                drawPath(Path().apply {
-                    moveTo(cx, ty - hh)
-                    lineTo(cx + w, ty - hh * 0.45f)
-                    lineTo(cx, ty)
-                    lineTo(cx - w, ty - hh * 0.45f)
-                    close()
-                }, if (t == tiers - 1) leafMain else leafDark)
-            }
-        }
-    }
+    // Ствол
+    drawRect(trunk, Offset(cx - 4f * s, cy - 30f * s), Size(8f * s, 30f * s))
+    // Нижний ярус кроны
+    drawPath(Path().apply {
+        moveTo(cx, cy - 78f * s)
+        lineTo(cx + 30f * s, cy - 40f * s)
+        lineTo(cx, cy - 22f * s)
+        lineTo(cx - 30f * s, cy - 40f * s)
+        close()
+    }, leafDark)
+    // Верхний ярус кроны
+    drawPath(Path().apply {
+        moveTo(cx, cy - 96f * s)
+        lineTo(cx + 20f * s, cy - 62f * s)
+        lineTo(cx, cy - 44f * s)
+        lineTo(cx - 20f * s, cy - 62f * s)
+        close()
+    }, leafMain)
 }
 
 /**
@@ -556,22 +533,32 @@ fun DrawScope.drawVegetation(
     }
     val wilting = phase >= 6
 
-    // Центр пачки смещён от центра клетки
-    val pcx = cx + (((bits and 0x1F) - 15).toFloat()) * 0.8f; bits = bits ushr 5
-    val pcy = cy + (((bits and 0x7) - 3).toFloat()) * 1.2f; bits = bits ushr 3
-    val heads = 3 + (bits and 0x3) + (if (nearWater) 2 else 0); bits = bits ushr 2
-    // Форма и палитра — общие на пачку, чтобы клумба читалась цельно
-    val shape = (seed ushr 11) and 0x3         // 0 шар, 1 звезда, 2 колокольчик, 3 4-лепестка
-    val palette = (seed ushr 13) and 0x7
+    // Клумба: органичное скопление вокруг смещённого от центра клетки ядра
+    val pcx = cx + (((bits and 0x1F) - 15).toFloat()) * 0.9f; bits = bits ushr 5
+    val pcy = cy + (((bits and 0x7) - 3).toFloat()) * 1.1f; bits = bits ushr 3
+    val heads = 4 + (bits and 0x3) + (if (nearWater) 3 else 0); bits = bits ushr 2
+    val palette = (seed ushr 13) and 0x7   // палитра общая на клумбу — читается цельно
 
+    // Рисуем от дальних (высоких/задних) к ближним, чтобы перекрытие смотрелось глубоко.
+    // Каждый цветок — овал разного размера на стебле разной высоты над биомом.
     for (i in 0 until heads) {
-        val hx = pcx + (((bits and 0xF) - 7).toFloat()) * 1.5f; bits = bits ushr 4
-        val hy = pcy + (((bits and 0x7) - 3).toFloat()) * 1.2f; bits = bits ushr 3
+        val ox = (((bits and 0x1F) - 15).toFloat()) * 1.3f; bits = bits ushr 5
+        val oy = (((bits and 0xF) - 7).toFloat()) * 1.0f; bits = bits ushr 4
+        val gx = pcx + ox
+        val gy = pcy + oy                                  // точка стебля на земле
+        val stalk = (5f + (bits and 0x7)) * life; bits = bits ushr 3   // высота цветка над биомом
+        val hx = gx
+        val hy = gy - stalk
         var head = flowerColor(palette, bits and 0x1); bits = bits ushr 1
-        if (wilting) head = head.copy(alpha = 0.55f)
-        val r = (3.6f + (bits and 0x3) * 0.9f) * life; bits = bits ushr 2
-        drawCircle(head.copy(alpha = head.alpha * 0.3f), r * 2.0f, Offset(hx, hy)) // свечение
-        drawFlowerHead(hx, hy, r, head, shape)
+        if (wilting) head = head.copy(alpha = 0.6f)
+        // Овал: ширина/высота слегка разные и варьируются — «кружечки разной высоты»
+        val rw = (3.2f + (bits and 0x3) * 1.1f) * life; bits = bits ushr 2
+        val rh = rw * (0.75f + (bits and 0x3) * 0.12f); bits = bits ushr 2
+
+        // Стебель
+        drawLine(Color(0xFF2F5D46).copy(alpha = head.alpha), Offset(gx, gy), Offset(hx, hy), strokeWidth = 1.4f)
+        // Головка-овал
+        drawOval(head, topLeft = Offset(hx - rw, hy - rh), size = Size(rw * 2f, rh * 2f))
     }
 }
 
@@ -584,42 +571,6 @@ private fun flowerColor(palette: Int, variant: Int): Color = when (palette) {
     5    -> if (variant == 0) Color(0xFF64FFDA) else Color(0xFF00B8D4)  // изумруд/лазурь
     6    -> if (variant == 0) Color(0xFFB388FF) else Color(0xFFEA80FC)  // аметист/орхидея
     else -> if (variant == 0) Color(0xFFFF8A80) else Color(0xFFFFD180)  // закат
-}
-
-/** Головка цветка нужной формы. shape: 0 шар, 1 звезда, 2 колокольчик, 3 крестоцвет. */
-private fun DrawScope.drawFlowerHead(x: Float, y: Float, r: Float, c: Color, shape: Int) {
-    when (shape) {
-        1 -> { // Пятилучевая звезда
-            val path = Path()
-            for (k in 0 until 10) {
-                val ang = (Math.PI.toFloat() / 5f) * k - Math.PI.toFloat() / 2f
-                val rr = if (k % 2 == 0) r * 1.35f else r * 0.55f
-                val px = x + cos(ang) * rr
-                val py = y + sin(ang) * rr
-                if (k == 0) path.moveTo(px, py) else path.lineTo(px, py)
-            }
-            path.close()
-            drawPath(path, c)
-            drawCircle(Color(0xFFFFF3B0), r * 0.3f, Offset(x, y))  // сердцевина
-        }
-        2 -> { // Колокольчик — капля вниз + чашечка
-            val path = Path().apply {
-                moveTo(x, y + r * 1.3f)
-                cubicTo(x - r * 1.2f, y + r * 0.2f, x - r * 0.9f, y - r, x, y - r)
-                cubicTo(x + r * 0.9f, y - r, x + r * 1.2f, y + r * 0.2f, x, y + r * 1.3f)
-                close()
-            }
-            drawPath(path, c)
-        }
-        3 -> { // Четыре лепестка
-            for (k in 0 until 4) {
-                val ang = (Math.PI.toFloat() / 2f) * k
-                drawCircle(c, r * 0.6f, Offset(x + cos(ang) * r * 0.7f, y + sin(ang) * r * 0.7f))
-            }
-            drawCircle(Color(0xFFFFF3B0), r * 0.4f, Offset(x, y))
-        }
-        else -> drawCircle(c, r, Offset(x, y))  // шар
-    }
 }
 
 private fun DrawScope.drawTuft(x: Float, y: Float, dry: Boolean) {
