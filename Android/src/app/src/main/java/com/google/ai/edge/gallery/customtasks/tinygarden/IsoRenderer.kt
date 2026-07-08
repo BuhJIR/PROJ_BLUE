@@ -260,6 +260,23 @@ fun rememberSpriteClock(): State<Long> {
     return ms
 }
 
+// AGSL-шейдер рентген-силуэта: неоновый вертикальный градиент + бегущие
+// скан-линии по времени. Заливает скрытую за преградой часть персонажа.
+private const val HOLO_AGSL = """
+uniform float2 iResolution;
+uniform float iTime;
+half4 main(float2 fc) {
+    float2 uv = fc / iResolution;
+    half3 a = half3(0.0, 0.9, 1.0);
+    half3 b = half3(0.65, 0.30, 1.0);
+    half3 base = mix(a, b, uv.y);
+    float scan = 0.5 + 0.5 * sin(fc.y * 0.5 - iTime * 7.0);
+    scan = pow(scan, 3.0);
+    float glow = 0.55 + 0.7 * scan;
+    return half4(base * glow, 0.92);
+}
+"""
+
 // ── Главный рендерер ──────────────────────────────────────────────────────────
 @Composable
 fun IsoMapRenderer(
@@ -270,6 +287,12 @@ fun IsoMapRenderer(
     val context = LocalContext.current
     var camOffset by remember { mutableStateOf(Offset(0f, -180f)) }
     val spriteClock by rememberSpriteClock()
+
+    // Голографический шейдер для рентген-силуэта (AGSL, minSdk 33 гарантирует API)
+    val holoShader = remember { runCatching { android.graphics.RuntimeShader(HOLO_AGSL) }.getOrNull() }
+    val holoBrush = remember(holoShader) {
+        holoShader?.let { androidx.compose.ui.graphics.ShaderBrush(it) }
+    }
 
     // Карта регенерируется когда игрок близко к краю — ОДНИМ seed'ом.
     // engine.worldMap — та же карта, которой пользуются Pathfinder и BehaviourExecutor.
@@ -427,9 +450,12 @@ fun IsoMapRenderer(
             }
         }
 
-        // ── Рентген-силуэт: часть сущности за преградой — неоновый контур ───────
-        // Обрезаем силуэт clipPath'ом по боксам преград, что ближе по глубине —
-        // светится ровно то, что спрятано за стеной/деревом (без шейдеров).
+        // ── Рентген-силуэт: часть сущности за преградой — голографический шейдер ─
+        // AGSL RuntimeShader (minSdk 33). Силуэт маскируется альфой спрайта через
+        // saveLayer+SrcIn и обрезается clipPath'ом по боксам преград — сквозь
+        // стену/дерево светится ровно скрытая часть, живой скан-эффект.
+        holoShader?.setFloatUniform("iResolution", size.width, size.height)
+        holoShader?.setFloatUniform("iTime", (spriteClock % 100000L) / 1000f)
         for (er in entRenders) {
             val sheet = er.sheet ?: continue
             val hides = occluders.filter { o ->
@@ -440,8 +466,21 @@ fun IsoMapRenderer(
                 hides.forEach { addRect(androidx.compose.ui.geometry.Rect(it.l, it.t, it.r, it.b)) }
             }
             clipPath(clip) {
-                drawSpriteFrame(sheet, er.fi, er.screenX, er.screenY, er.scale,
-                    tint = Color(0xFF00E5FF), alpha = 0.85f)
+                if (holoBrush != null) {
+                    val bounds = androidx.compose.ui.geometry.Rect(er.l, er.t, er.r, er.b)
+                    drawContext.canvas.saveLayer(bounds, androidx.compose.ui.graphics.Paint())
+                    drawSpriteFrame(sheet, er.fi, er.screenX, er.screenY, er.scale)  // альфа-маска
+                    drawRect(
+                        brush = holoBrush,
+                        topLeft = Offset(er.l, er.t),
+                        size = Size(er.r - er.l, er.b - er.t),
+                        blendMode = androidx.compose.ui.graphics.BlendMode.SrcIn,
+                    )
+                    drawContext.canvas.restore()
+                } else {
+                    drawSpriteFrame(sheet, er.fi, er.screenX, er.screenY, er.scale,
+                        tint = Color(0xFF00E5FF), alpha = 0.85f)
+                }
             }
         }
 
