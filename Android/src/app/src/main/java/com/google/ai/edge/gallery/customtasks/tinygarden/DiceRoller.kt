@@ -116,11 +116,10 @@ private enum class DieState { HOVER, THROWN, RESULT, RETURN }
 private class DieBody {
     var homeX = 0f
     var groundY = 0f
-    var hoverH = 50f
-    var rp = 26f                      // физический полу-размер куба (px)
+    var hoverH = 46f
 
     var px = 0f
-    var h = 50f                       // высота ЦЕНТРА над плоскостью пола
+    var h = 46f                       // высота кубика над полом (0 = лежит)
     var vx = 0f
     var vh = 0f
     var rot = randomRot()
@@ -128,7 +127,6 @@ private class DieBody {
     var t = 0f
     var timer = 0f
     var landPx = 0f
-    var landH = 0f
 
     var state = DieState.HOVER
         private set
@@ -143,8 +141,6 @@ private class DieBody {
         worldW = width
         homeX = width - 66f
         groundY = height * 0.72f          // сильно ниже — ~1/3 высоты от нижнего края
-        rp = kotlin.math.min(width, height) * 0.057f
-        hoverH = rp * 1.9f                 // над полом так, что нижняя вершина не в полу
         if (state == DieState.HOVER && px == 0f) px = homeX
     }
 
@@ -153,7 +149,6 @@ private class DieBody {
         val speed = sqrt(vSwipe.x * vSwipe.x + vSwipe.y * vSwipe.y)
         if (speed < 90f) return                   // случайный тап — не бросок
         state = DieState.THROWN
-        h = kotlin.math.max(h, rp * 1.85f)        // стартуем гарантированно над полом
         // Шире диапазон силы: слабый свайп — короткий бросок, резкий — далёкий
         vx = (vSwipe.x * 0.55f).coerceIn(-1600f, 1600f)
         vh = (300f - vSwipe.y * 0.55f + speed * 0.16f).coerceIn(280f, 1800f)  // вверх
@@ -180,56 +175,39 @@ private class DieBody {
                 spin(dt, 1f)
             }
             DieState.THROWN -> {
+                // Простая баллистика: гравитация + затухающие отскоки от пола.
                 vh -= G * dt
                 h += vh * dt
                 px += vx * dt
                 if (px < 40f) { px = 40f; vx = -vx * 0.5f }
                 if (px > worldW - 40f) { px = worldW - 40f; vx = -vx * 0.5f }
                 spin(dt, 1f)
-
-                // Контакт по НИЖНЕЙ вершине — кубик задевает пол ребром/углом,
-                // а не центром: отсюда естественные отскоки и опрокидывание.
-                val lowest = h + rp * lowestVy()
-                var grounded = false
-                if (lowest < 0f) {
-                    grounded = true
-                    h -= lowest                                   // вытолкнуть из пола
-                    val (axis, tilt) = flatAxisTilt()             // куда валиться на грань
-                    if (abs(vh) > 45f) {
-                        vh = -vh * RESTITUTION                     // упругий отскок от вершины
-                        vx *= 0.72f
-                        wx *= 0.5f; wy *= 0.5f; wz *= 0.5f
-                        val kick = 3f + tilt * 6f                  // опрокидывающий импульс
-                        wx += axis.x * kick; wy += axis.y * kick; wz += axis.z * kick
-                    } else {
-                        vh = 0f; vx *= 0.5f
-                        // Тихо на земле — гравитация доваливает ближайшую грань вниз,
-                        // поэтому балансировать на ребре кубик почти никогда не остаётся
-                        wx = wx * 0.7f + axis.x * tilt * 14f
-                        wy = wy * 0.7f + axis.y * tilt * 14f
-                        wz = wz * 0.7f + axis.z * tilt * 14f
+                if (h <= 0f) {
+                    h = 0f
+                    if (abs(vh) > 60f) {                     // упругий отскок, гасим кувыркание
+                        vh = -vh * RESTITUTION; vx *= 0.7f
+                        wx *= 0.6f; wy *= 0.6f; wz *= 0.6f
+                    } else {                                 // осел на землю
+                        vh = 0f; vx *= 0.6f
+                        wx *= 0.8f; wy *= 0.8f; wz *= 0.8f
                     }
                 }
-                clampSpin(45f)
-
                 val spinMag = sqrt(wx * wx + wy * wy + wz * wz)
-                val tiltNow = flatAxisTilt().second
-                // Уложился ровно на грань (ребро — редкость) при низкой энергии
-                if (grounded && abs(vh) < 14f && spinMag < 0.9f && tiltNow < 0.05f) {
+                if (h == 0f && abs(vh) < 12f && spinMag < 0.8f) {
                     timer += dt
-                    if (timer > 0.18f) settle()
+                    if (timer > 0.22f) settle()              // доворот на грань — ложится ровно
                 } else timer = 0f
             }
             DieState.RESULT -> {
                 timer += dt
-                if (timer > 0.7f) { state = DieState.RETURN; timer = 0f; landPx = px; landH = h }
+                if (timer > 0.7f) { state = DieState.RETURN; timer = 0f; landPx = px }
             }
             DieState.RETURN -> {
                 // Плавно летим домой, НЕ вращаясь — грань-результат видно всю дорогу
                 timer += dt
                 val p = smooth((timer / 0.55f).coerceIn(0f, 1f))
                 px = lerp(landPx, homeX, p)
-                h = lerp(landH, hoverH, p)
+                h = lerp(0f, hoverH, p)
                 if (p >= 1f) state = DieState.HOVER
             }
         }
@@ -288,35 +266,6 @@ private class DieBody {
 
     private fun cross(a: V3, b: V3) =
         V3(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x)
-
-    /** Самая низкая вершина куба в единицах rp (её высота = h + rp·это). */
-    private fun lowestVy(): Float {
-        var m = 2f
-        for (v in VERTS) { val y = apply(rot, v).y; if (y < m) m = y }
-        return m
-    }
-
-    /**
-     * Ось и величина наклона, чтобы верхняя грань «легла» плоско: вращение
-     * вокруг axis приближает нормаль верхней грани к вертикали (0,1,0).
-     * tilt = sin угла отклонения — 0 когда грань уже плоско лежит.
-     */
-    private fun flatAxisTilt(): Pair<V3, Float> {
-        var bestN = V3(0f, 1f, 0f); var bd = -2f
-        for (f in FACES) {
-            val wn = apply(rot, f.normal)
-            if (wn.y > bd) { bd = wn.y; bestN = wn }
-        }
-        val ax = cross(bestN, V3(0f, 1f, 0f))
-        val tilt = sqrt(ax.x * ax.x + ax.y * ax.y + ax.z * ax.z)
-        if (tilt < 1e-4f) return V3(0f, 0f, 0f) to 0f
-        return V3(ax.x / tilt, ax.y / tilt, ax.z / tilt) to tilt
-    }
-
-    private fun clampSpin(maxW: Float) {
-        val m = sqrt(wx * wx + wy * wy + wz * wz)
-        if (m > maxW) { val k = maxW / m; wx *= k; wy *= k; wz *= k }
-    }
 
     private companion object {
         const val G = 2600f
