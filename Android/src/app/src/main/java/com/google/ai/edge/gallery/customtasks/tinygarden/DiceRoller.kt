@@ -24,7 +24,13 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.unit.dp
-import kotlin.math.abs
+import net.smert.jreactphysics3d.body.RigidBody
+import net.smert.jreactphysics3d.collision.shapes.BoxShape
+import net.smert.jreactphysics3d.engine.DynamicsWorld
+import net.smert.jreactphysics3d.mathematics.Matrix3x3
+import net.smert.jreactphysics3d.mathematics.Quaternion
+import net.smert.jreactphysics3d.mathematics.Transform
+import net.smert.jreactphysics3d.mathematics.Vector3
 import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.math.sqrt
@@ -119,14 +125,14 @@ private class DieBody {
     var hoverH = 46f
 
     var px = 0f
-    var h = 46f                       // высота кубика над полом (0 = лежит)
-    var vx = 0f
-    var vh = 0f
-    var rot = randomRot()
-    var wx = 0.5f; var wy = 0.8f; var wz = 0.3f
+    var h = 46f                       // высота кубика над полом в px (0 = лежит)
+    var rot = randomRot()             // матрица ориентации для рендера (row-major)
+    var wx = 0.5f; var wy = 0.8f; var wz = 0.3f   // idle-вращение в HOVER
     var t = 0f
     var timer = 0f
+    var thrownFor = 0f
     var landPx = 0f
+    var landH = 0f
 
     var state = DieState.HOVER
         private set
@@ -135,25 +141,76 @@ private class DieBody {
     /** Взводится один раз при фиксации — вызывающий резолвит и сбрасывает. */
     var pendingResolve = false
 
-    var worldW = 0f
+    // ── Физика: настоящий 3D-движок jReactPhysics3D ──────────────────────────
+    private var world: DynamicsWorld? = null
+    private var die: RigidBody? = null
+    private var pxPerUnit = 30f       // px на 1 физ.единицу (полу-размер куба = 1)
 
     fun placeHome(width: Float, height: Float) {
-        worldW = width
         homeX = width - 66f
         groundY = height * 0.72f          // сильно ниже — ~1/3 высоты от нижнего края
+        pxPerUnit = kotlin.math.min(width, height) * 0.057f
         if (state == DieState.HOVER && px == 0f) px = homeX
+        ensureWorld()
+    }
+
+    /** Строит физический мир один раз: пол, стены-арена и динамический кубик. */
+    private fun ensureWorld() {
+        if (world != null) return
+        val w = DynamicsWorld(Vector3(0f, -26f, 0f), 1f / 60f)
+        // Пол (статичный): верх на y=0
+        addStatic(w, Vector3(0f, -1f, 0f), Vector3(24f, 1f, 24f))
+        // Стены арены, чтобы кубик не улетал (x,z ∈ [-ARENA..ARENA])
+        val a = ARENA
+        addStatic(w, Vector3(a + 1f, 6f, 0f), Vector3(1f, 8f, a + 1f))
+        addStatic(w, Vector3(-a - 1f, 6f, 0f), Vector3(1f, 8f, a + 1f))
+        addStatic(w, Vector3(0f, 6f, a + 1f), Vector3(a + 1f, 8f, 1f))
+        addStatic(w, Vector3(0f, 6f, -a - 1f), Vector3(a + 1f, 8f, 1f))
+        // Кубик (динамический), полу-размер 1
+        val shape = BoxShape(Vector3(1f, 1f, 1f), 0.04f)
+        val inertia = Matrix3x3()
+        shape.computeLocalInertiaTensor(inertia, DIE_MASS)
+        val body = w.createRigidBody(
+            Transform(Vector3(0f, 8f, 0f), Quaternion(0f, 0f, 0f, 1f)),
+            DIE_MASS, inertia, shape,
+        )
+        body.enableGravity(true)
+        body.setAngularDamping(0.06f)
+        body.setLinearDamping(0.02f)
+        body.material.setBounciness(0.45f)
+        body.material.setFrictionCoefficient(0.6f)
+        body.setIsSleeping(true)
+        world = w
+        die = body
+    }
+
+    private fun addStatic(w: DynamicsWorld, pos: Vector3, half: Vector3) {
+        val shape = BoxShape(half, 0.04f)
+        val b = w.createRigidBody(Transform(pos, Quaternion(0f, 0f, 0f, 1f)), 0f, Matrix3x3(), shape)
+        b.enableGravity(false)
+        b.setIsMotionEnabled(false)
+        b.material.setBounciness(0.4f)
+        b.material.setFrictionCoefficient(0.6f)
     }
 
     fun throwWith(vSwipe: Offset) {
         if (state != DieState.HOVER) return
+        val w = world ?: return
+        val body = die ?: return
         val speed = sqrt(vSwipe.x * vSwipe.x + vSwipe.y * vSwipe.y)
         if (speed < 90f) return                   // случайный тап — не бросок
         state = DieState.THROWN
-        // Шире диапазон силы: слабый свайп — короткий бросок, резкий — далёкий
-        vx = (vSwipe.x * 0.55f).coerceIn(-1600f, 1600f)
-        vh = (300f - vSwipe.y * 0.55f + speed * 0.16f).coerceIn(280f, 1800f)  // вверх
-        val sp = (speed * 0.025f + 8f)
-        wx = rand(sp); wy = rand(sp); wz = rand(sp)
+        thrownFor = 0f
+        // Ставим кубик в стартовую позу над полом и будим
+        body.setTransform(Transform(Vector3(0f, 7f, 0f), Quaternion(0f, 0f, 0f, 1f)))
+        body.setIsSleeping(false)
+        // Свайп → скорость в физ.единицах: горизонталь + подброс + случайный крутящий момент
+        val vX = (vSwipe.x / pxPerUnit * 0.6f).coerceIn(-14f, 14f)
+        val vY = (6f + speed * 0.004f).coerceIn(6f, 16f)
+        body.setLinearVelocity(Vector3(vX, vY, rand(4f)))
+        val sp = speed * 0.02f + 10f
+        body.setAngularVelocity(Vector3(rand(sp), rand(sp), rand(sp)))
+        w.start()                                 // сбрасываем таймер симуляции
     }
 
     /** Тап по кубику — крутануть его на месте (не бросок). */
@@ -167,47 +224,39 @@ private class DieBody {
         when (state) {
             DieState.HOVER -> {
                 h = hoverH + sin(t * 2.1f) * 4f
-                px += (homeX - px) * (1f - kotlin.math.exp(-6f * dt))   // мягко держим у дома
-                // Угловая скорость плавно оседает к спокойному idle — после тапа
-                // кубик крутанётся и сам успокоится
+                px += (homeX - px) * (1f - kotlin.math.exp(-6f * dt))
                 val k = 1f - kotlin.math.exp(-1.6f * dt)
                 wx += (IDLE_WX - wx) * k; wy += (IDLE_WY - wy) * k; wz += (IDLE_WZ - wz) * k
                 spin(dt, 1f)
             }
             DieState.THROWN -> {
-                // Простая баллистика: гравитация + затухающие отскоки от пола.
-                vh -= G * dt
-                h += vh * dt
-                px += vx * dt
-                if (px < 40f) { px = 40f; vx = -vx * 0.5f }
-                if (px > worldW - 40f) { px = worldW - 40f; vx = -vx * 0.5f }
-                spin(dt, 1f)
-                if (h <= 0f) {
-                    h = 0f
-                    if (abs(vh) > 60f) {                     // упругий отскок, гасим кувыркание
-                        vh = -vh * RESTITUTION; vx *= 0.7f
-                        wx *= 0.6f; wy *= 0.6f; wz *= 0.6f
-                    } else {                                 // осел на землю
-                        vh = 0f; vx *= 0.6f
-                        wx *= 0.8f; wy *= 0.8f; wz *= 0.8f
-                    }
+                val w = world ?: return
+                val body = die ?: return
+                w.update()                        // движок сам шагает по реальному времени
+                val tf = body.transform
+                val pos = tf.position
+                px = homeX + pos.x * pxPerUnit
+                h = (pos.y.coerceAtLeast(0f)) * pxPerUnit
+                rot = quatToMat9(tf.orientation)
+                thrownFor += dt
+                // Уснул (движок сам уложил на грань) — либо страховочный таймаут
+                if (body.isSleeping() || thrownFor > 8f) {
+                    value = upValue(rot)
+                    state = DieState.RESULT
+                    timer = 0f
+                    pendingResolve = true
+                    w.stop()
                 }
-                val spinMag = sqrt(wx * wx + wy * wy + wz * wz)
-                if (h == 0f && abs(vh) < 12f && spinMag < 0.8f) {
-                    timer += dt
-                    if (timer > 0.22f) settle()              // доворот на грань — ложится ровно
-                } else timer = 0f
             }
             DieState.RESULT -> {
                 timer += dt
-                if (timer > 0.7f) { state = DieState.RETURN; timer = 0f; landPx = px }
+                if (timer > 0.7f) { state = DieState.RETURN; timer = 0f; landPx = px; landH = h }
             }
             DieState.RETURN -> {
-                // Плавно летим домой, НЕ вращаясь — грань-результат видно всю дорогу
                 timer += dt
                 val p = smooth((timer / 0.55f).coerceIn(0f, 1f))
                 px = lerp(landPx, homeX, p)
-                h = lerp(0f, hoverH, p)
+                h = lerp(landH, hoverH, p)
                 if (p >= 1f) state = DieState.HOVER
             }
         }
@@ -218,15 +267,6 @@ private class DieBody {
         if (s > 1e-4f) rot = mul(rodrigues(wx, wy, wz, s * dt * k), rot)
     }
 
-    private fun settle() {
-        rot = snap(rot)
-        value = upValue(rot)
-        state = DieState.RESULT
-        timer = 0f
-        pendingResolve = true
-    }
-
-    // Масштаб «пульсирует» по состоянию — брошенный крупнее висящего
     fun renderScale(base: Float): Float = base * when (state) {
         DieState.HOVER -> 0.82f
         DieState.THROWN, DieState.RESULT -> 1.15f
@@ -235,6 +275,7 @@ private class DieBody {
 
     fun showingResult() = state == DieState.RESULT || state == DieState.RETURN
 
+    /** Значение грани, чья нормаль ближе всего к мировому «вверх» (0,1,0). */
     private fun upValue(m: FloatArray): Int {
         var best = FACES[0]; var bestDot = -2f
         for (f in FACES) {
@@ -244,32 +285,22 @@ private class DieBody {
         return best.value
     }
 
-    private fun snap(m: FloatArray): FloatArray {
-        val cx = axisSnap(V3(m[0], m[3], m[6]))
-        var cy = axisSnap(V3(m[1], m[4], m[7]))
-        if (sameAxis(cx, cy)) cy = if (cx.x == 0f) V3(1f, 0f, 0f) else V3(0f, 1f, 0f)
-        val cz = cross(cx, cy)
-        return mat(cx.x, cy.x, cz.x, cx.y, cy.y, cz.y, cx.z, cy.z, cz.z)
+    /** Кватернион движка → row-major матрица 3×3 для нашего рендера. */
+    private fun quatToMat9(q: Quaternion): FloatArray {
+        val x = q.x; val y = q.y; val z = q.z; val w = q.w
+        val xx = x * x; val yy = y * y; val zz = z * z
+        val xy = x * y; val xz = x * z; val yz = y * z
+        val wx = w * x; val wy = w * y; val wz = w * z
+        return floatArrayOf(
+            1 - 2 * (yy + zz), 2 * (xy - wz),     2 * (xz + wy),
+            2 * (xy + wz),     1 - 2 * (xx + zz), 2 * (yz - wx),
+            2 * (xz - wy),     2 * (yz + wx),     1 - 2 * (xx + yy),
+        )
     }
-
-    private fun axisSnap(v: V3): V3 {
-        val ax = abs(v.x); val ay = abs(v.y); val az = abs(v.z)
-        return when {
-            ax >= ay && ax >= az -> V3(if (v.x >= 0) 1f else -1f, 0f, 0f)
-            ay >= az             -> V3(0f, if (v.y >= 0) 1f else -1f, 0f)
-            else                 -> V3(0f, 0f, if (v.z >= 0) 1f else -1f)
-        }
-    }
-
-    private fun sameAxis(a: V3, b: V3) =
-        (a.x != 0f && b.x != 0f) || (a.y != 0f && b.y != 0f) || (a.z != 0f && b.z != 0f)
-
-    private fun cross(a: V3, b: V3) =
-        V3(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x)
 
     private companion object {
-        const val G = 2600f
-        const val RESTITUTION = 0.5f
+        const val ARENA = 5f
+        const val DIE_MASS = 1f
         const val IDLE_WX = 0.5f
         const val IDLE_WY = 0.8f
         const val IDLE_WZ = 0.3f
